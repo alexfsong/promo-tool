@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Promo Tool</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header>
+    <h1>Promo Tool</h1>
+    <div class="header-controls">
+      <label class="advanced-toggle">
+        <input type="checkbox" id="advancedToggle" />
+        Advanced
+      </label>
+      <button class="icon-btn" id="settingsBtn" title="Settings">⚙</button>
+    </div>
+  </header>
+
+  <!-- Settings panel -->
+  <div id="settingsPanel" class="settings-panel hidden">
+    <div class="field">
+      <label for="apiKeyInput">The Odds API key</label>
+      <input type="text" id="apiKeyInput" placeholder="Paste your API key here" />
+      <span class="hint">Free at <strong>the-odds-api.com</strong> — 500 requests/month.</span>
+    </div>
+    <button class="calc-btn" id="saveApiKey">Save</button>
+    <div id="apiKeySaved" class="hidden" style="font-size:12px;color:#22c55e;margin-top:4px;">Saved!</div>
+
+    <div class="settings-divider"></div>
+
+    <div class="field">
+      <label>My sportsbooks</label>
+      <span class="hint">Select every book where you have an account. Hedges will only use these books.</span>
+      <div id="my-books-list" class="scan-books-list" style="margin-top:6px;"></div>
+    </div>
+  </div>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-tab="scanner" role="tab">Scanner</button>
+    <button class="tab" data-tab="odds" role="tab">Best Odds</button>
+    <button class="tab" data-tab="bonus" role="tab">Bonus Bet</button>
+    <button class="tab" data-tab="riskfree" role="tab">Risk-Free</button>
+    <button class="tab" data-tab="deposit" role="tab">Deposit</button>
+    <button class="tab" data-tab="boost" role="tab">Boost</button>
+  </nav>
+
+  <!-- Promo Scanner -->
+  <section id="tab-scanner" class="tab-panel active">
+    <p class="tagline">Find the best bonus bet conversion opportunities right now.</p>
+
+    <div class="scanner-controls">
+      <div class="field">
+        <label for="scan-sport">Sport</label>
+        <select id="scan-sport">
+          <option value="__all__">Best overall (all sports)</option>
+          <option value="americanfootball_nfl">NFL</option>
+          <option value="basketball_nba">NBA</option>
+          <option value="baseball_mlb">MLB</option>
+          <option value="icehockey_nhl">NHL</option>
+        </select>
+      </div>
+      <div class="range-row">
+        <div class="field">
+          <label for="scan-min">Min odds</label>
+          <input type="number" id="scan-min" value="300" min="100" max="2000" step="50" />
+        </div>
+        <div class="field">
+          <label for="scan-max">Max odds</label>
+          <input type="number" id="scan-max" value="500" min="100" max="5000" step="50" />
+        </div>
+        <div class="field">
+          <label for="scan-amount">Bonus ($)</label>
+          <input type="number" id="scan-amount" value="100" min="1" step="10" />
+        </div>
+      </div>
+    </div>
+
+    <button class="calc-btn" id="scan-load">Scan</button>
+
+    <div id="scan-status" class="hidden odds-loading"></div>
+
+    <div id="scan-books-section" class="hidden">
+      <div class="scan-books-label">My books <span class="hint">(where you have bonus bets)</span></div>
+      <div id="scan-books-list" class="scan-books-list"></div>
+    </div>
+
+    <div id="scan-results" class="scan-results hidden"></div>
+  </section>
+
+  <!-- Best Odds -->
+  <section id="tab-odds" class="tab-panel hidden">
+    <p class="tagline">Find the best available odds across all books.</p>
+
+    <div class="field">
+      <label for="odds-sport">Sport</label>
+      <select id="odds-sport">
+        <option value="americanfootball_nfl">NFL</option>
+        <option value="basketball_nba">NBA</option>
+        <option value="baseball_mlb">MLB</option>
+        <option value="icehockey_nhl">NHL</option>
+      </select>
+    </div>
+
+    <button class="calc-btn" id="odds-load">Load Games</button>
+
+    <div id="odds-game-field" class="field hidden">
+      <label for="odds-game">Game</label>
+      <select id="odds-game"></select>
+    </div>
+
+    <div id="odds-result" class="odds-result hidden"></div>
+
+    <div class="use-odds hidden" id="use-odds-row">
+      <span class="use-odds-label">Use these odds in:</span>
+      <button class="use-btn" data-target="bonus">Bonus Bet</button>
+      <button class="use-btn" data-target="boost">Odds Boost</button>
+    </div>
+  </section>
+
+  <!-- Bonus Bet -->
+  <section id="tab-bonus" class="tab-panel hidden">
+    <p class="tagline">Turn a bonus bet into guaranteed cash.</p>
+
+    <div class="field">
+      <label for="bonus-amount">How much is the bonus bet? ($)</label>
+      <input type="number" id="bonus-amount" placeholder="100" min="0" step="1" />
+    </div>
+    <div class="field">
+      <label for="bonus-back">Odds for the bet you'll place the bonus on</label>
+      <input type="text" id="bonus-back" placeholder="+200 or 3.0" />
+    </div>
+    <div class="field">
+      <label for="bonus-lay">Best available odds on the other side (other book)</label>
+      <input type="text" id="bonus-lay" placeholder="-110 or 1.91" />
+    </div>
+
+    <button class="calc-btn" id="bonus-calc">Calculate</button>
+    <div class="result hidden" id="bonus-result"></div>
+
+    <details class="explainer beginner-only">
+      <summary>How this works</summary>
+      <div class="explainer-body" id="bonus-explainer"></div>
+    </details>
+  </section>
+
+  <!-- Risk-Free -->
+  <section id="tab-riskfree" class="tab-panel hidden">
+    <p class="tagline">Find the expected value of a risk-free or second-chance bet.</p>
+
+    <div class="field">
+      <label for="rf-stake">How much will you bet? ($)</label>
+      <input type="number" id="rf-stake" placeholder="100" min="0" step="1" />
+    </div>
+    <div class="field">
+      <label for="rf-odds">Odds on the bet</label>
+      <input type="text" id="rf-odds" placeholder="+200 or 3.0" />
+    </div>
+    <div class="field">
+      <label for="rf-refund">How much is refunded if you lose? ($)</label>
+      <input type="number" id="rf-refund" placeholder="Same as stake" min="0" step="1" />
+    </div>
+    <div class="field">
+      <label for="rf-conversion">Bonus bet conversion rate (%)</label>
+      <input type="number" id="rf-conversion" placeholder="70" min="0" max="100" step="1" />
+      <span class="hint">70% is a safe default.</span>
+    </div>
+    <div class="field advanced-only hidden">
+      <label for="rf-winprob">True win probability (%) — leave blank to use implied odds</label>
+      <input type="number" id="rf-winprob" placeholder="Auto" min="0" max="100" step="0.1" />
+    </div>
+
+    <button class="calc-btn" id="rf-calc">Calculate</button>
+    <div class="result hidden" id="rf-result"></div>
+
+    <details class="explainer beginner-only">
+      <summary>How this works</summary>
+      <div class="explainer-body" id="rf-explainer"></div>
+    </details>
+  </section>
+
+  <!-- Deposit Match -->
+  <section id="tab-deposit" class="tab-panel hidden">
+    <p class="tagline">Is a deposit match offer worth taking?</p>
+
+    <div class="field">
+      <label for="dep-match">How much is the match? ($)</label>
+      <input type="number" id="dep-match" placeholder="500" min="0" step="1" />
+    </div>
+    <div class="field">
+      <label for="dep-rollover">Rollover requirement (x times the bonus)</label>
+      <input type="number" id="dep-rollover" placeholder="5" min="1" step="1" />
+      <span class="hint">A "5x rollover on $200" means you must wager $1,000 total.</span>
+    </div>
+    <div class="field">
+      <label for="dep-hold">House edge per bet (%)</label>
+      <input type="number" id="dep-hold" placeholder="4.76" min="0" max="50" step="0.01" />
+      <span class="hint">4.76% is standard for -110/-110 markets.</span>
+    </div>
+
+    <button class="calc-btn" id="dep-calc">Calculate</button>
+    <div class="result hidden" id="dep-result"></div>
+
+    <details class="explainer beginner-only">
+      <summary>How this works</summary>
+      <div class="explainer-body" id="dep-explainer"></div>
+    </details>
+  </section>
+
+  <!-- Odds Boost -->
+  <section id="tab-boost" class="tab-panel hidden">
+    <p class="tagline">Is this boosted line actually a good deal?</p>
+
+    <div class="field">
+      <label for="boost-boosted">Boosted odds offered by the book</label>
+      <input type="text" id="boost-boosted" placeholder="+150 or 2.5" />
+    </div>
+    <div class="field">
+      <label for="boost-fair">Fair odds (from a sharp book like Pinnacle)</label>
+      <input type="text" id="boost-fair" placeholder="+100 or 2.0" />
+      <span class="hint">Not sure? Use Best Odds tab to find current market odds.</span>
+    </div>
+    <div class="field">
+      <label for="boost-stake">How much will you bet? ($)</label>
+      <input type="number" id="boost-stake" placeholder="50" min="0" step="1" />
+    </div>
+
+    <button class="calc-btn" id="boost-calc">Calculate</button>
+    <div class="result hidden" id="boost-result"></div>
+
+    <details class="explainer beginner-only">
+      <summary>How this works</summary>
+      <div class="explainer-body" id="boost-explainer"></div>
+    </details>
+  </section>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

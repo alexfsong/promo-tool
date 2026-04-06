@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "Promo Tool",
+  "version": "2.0.0",
+  "description": "Find best odds across sportsbooks. Calculate bonus bets, risk-free bets, deposit matches, and odds boosts.",
+  "action": {
+    "default_title": "Promo Tool"
+  },
+  "side_panel": {
+    "default_path": "popup/popup.html"
+  },
+  "background": {
+    "service_worker": "background/serviceWorker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.draftkings.com/*", "*://*.fanduel.com/*"],
+      "js": ["content/contentScript.js"],
+      "css": ["content/contentScript.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "assets/icons/icon16.png",
+    "32": "assets/icons/icon32.png",
+    "48": "assets/icons/icon48.png",
+    "128": "assets/icons/icon128.png"
+  },
+  "permissions": ["storage", "sidePanel"],
+  "host_permissions": ["https://api.the-odds-api.com/*"]
+}
