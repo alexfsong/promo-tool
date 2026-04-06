@@ -4,7 +4,7 @@ import { riskFreeEV } from '../src/calc/riskFree.js';
 import { depositMatchEV } from '../src/calc/depositMatch.js';
 import { oddsBoostEV } from '../src/calc/oddsBoost.js';
 import { explanations } from '../src/ui/explanations.js';
-import { fetchGames, fetchForContentScript, fetchActiveSports, bestOdds, allOdds, getApiKey, saveApiKey } from '../src/api/oddsApi.js';
+import { fetchForContentScript, fetchActiveSports, getApiKey, saveApiKey } from '../src/api/oddsApi.js';
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
 document.querySelectorAll('.tab').forEach(btn => {
@@ -101,7 +101,6 @@ function makeSearchableSelect(select) {
 // ── Sport dropdowns (dynamic) ─────────────────────────────────────────────────
 
 const scanSportSS = makeSearchableSelect(document.getElementById('scan-sport'));
-const oddsSportSS = makeSearchableSelect(document.getElementById('odds-sport'));
 
 async function initSportDropdowns() {
   const apiKey = await getApiKey();
@@ -137,10 +136,8 @@ async function initSportDropdowns() {
 
   document.getElementById('scan-sport').innerHTML =
     `<option value="__all__">Best overall (all sports)</option>` + sportOptions;
-  document.getElementById('odds-sport').innerHTML = sportOptions;
 
   scanSportSS.rebuild();
-  oddsSportSS.rebuild();
 }
 
 initSportDropdowns();
@@ -516,119 +513,6 @@ function getNum(inputId, fallback) {
   const v = parseFloat(document.getElementById(inputId).value);
   return Number.isFinite(v) ? v : fallback;
 }
-
-// ── Best Odds tab ─────────────────────────────────────────────────────────────
-let currentGames = [];
-let selectedGameData = null;
-
-document.getElementById('odds-load').addEventListener('click', async () => {
-  const apiKey = await getApiKey();
-  if (!apiKey) {
-    document.getElementById('odds-result').innerHTML = '<div class="odds-error">Add your API key in Settings (⚙) first.</div>';
-    document.getElementById('odds-result').classList.remove('hidden');
-    return;
-  }
-
-  const sport = document.getElementById('odds-sport').value;
-  const resultEl = document.getElementById('odds-result');
-  const gameField = document.getElementById('odds-game-field');
-  const useRow = document.getElementById('use-odds-row');
-
-  resultEl.innerHTML = '<div class="odds-loading">Loading games…</div>';
-  resultEl.classList.remove('hidden');
-  gameField.classList.add('hidden');
-  useRow.classList.add('hidden');
-
-  try {
-    currentGames = await fetchGames(sport, apiKey);
-    if (!currentGames.length) {
-      resultEl.innerHTML = '<div class="odds-error">No upcoming games found for this sport.</div>';
-      return;
-    }
-
-    const gameSelect = document.getElementById('odds-game');
-    gameSelect.innerHTML = currentGames.map((g, i) => {
-      const date = new Date(g.commenceTime).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-      return `<option value="${i}">${g.away} @ ${g.home} — ${date}</option>`;
-    }).join('');
-
-    gameField.classList.remove('hidden');
-    renderOddsTable(0);
-  } catch (err) {
-    resultEl.innerHTML = `<div class="odds-error">${err.message}</div>`;
-  }
-});
-
-document.getElementById('odds-game').addEventListener('change', e => {
-  renderOddsTable(parseInt(e.target.value));
-});
-
-function renderOddsTable(gameIndex) {
-  const game = currentGames[gameIndex];
-  selectedGameData = game;
-  const result = document.getElementById('odds-result');
-  const useRow = document.getElementById('use-odds-row');
-
-  if (!game?.bookmakers?.length) {
-    result.innerHTML = '<div class="odds-error">No odds data available for this game.</div>';
-    useRow.classList.add('hidden');
-    return;
-  }
-
-  const rows = allOdds(game);
-  const best = bestOdds(game);
-
-  // Build table header from team names
-  const teams = [game.away, game.home];
-  const teamHeaders = teams.map(t => `<th>${t.split(' ').pop()}</th>`).join(''); // last word (team name)
-
-  const tableRows = rows.map(row => {
-    const cells = teams.map(team => {
-      const odds = row[team];
-      if (odds == null) return '<td>—</td>';
-      const isBest = best[team] && best[team].book === row.book && best[team].odds === odds;
-      return `<td class="${isBest ? 'odds-best' : ''}">${fmtAmerican(odds)}</td>`;
-    }).join('');
-    return `<tr><td>${row.book}</td>${cells}</tr>`;
-  }).join('');
-
-  result.innerHTML = `
-    <div class="odds-game-label">${game.away} @ ${game.home}</div>
-    <table class="odds-table">
-      <thead><tr><th>Book</th>${teamHeaders}</tr></thead>
-      <tbody>${tableRows}</tbody>
-    </table>
-    <div style="font-size:11px;color:var(--muted)">Green = best available odds for that side.</div>
-  `;
-
-  useRow.classList.remove('hidden');
-}
-
-// "Use these odds" buttons — feed into calculators
-document.querySelectorAll('.use-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    if (!selectedGameData) return;
-    const best = bestOdds(selectedGameData);
-    const teams = Object.keys(best);
-    if (!teams.length) return;
-
-    const target = btn.dataset.target;
-
-    if (target === 'bonus') {
-      // Back odds = best odds for team[0], lay odds = best odds for team[1]
-      if (teams[0]) document.getElementById('bonus-back').value = fmtAmerican(best[teams[0]].odds);
-      if (teams[1]) document.getElementById('bonus-lay').value = fmtAmerican(best[teams[1]].odds);
-      // Switch to bonus tab
-      document.querySelector('[data-tab="bonus"]').click();
-    } else if (target === 'boost') {
-      // Fill fair odds field with best available (sharpest line)
-      // Use the team with the best (highest) odds as the "fair" reference
-      const sharpest = teams.reduce((a, b) => best[a].odds > best[b].odds ? a : b);
-      document.getElementById('boost-fair').value = fmtAmerican(best[sharpest].odds);
-      document.querySelector('[data-tab="boost"]').click();
-    }
-  });
-});
 
 // ── Bonus Bet ─────────────────────────────────────────────────────────────────
 document.getElementById('bonus-calc').addEventListener('click', () => {

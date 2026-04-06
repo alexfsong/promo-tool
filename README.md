@@ -1,23 +1,50 @@
 # Promo Tool
 
-A Chrome extension that calculates the expected value of sportsbook promotions. Designed for beginners — plain-English explanations alongside the math.
+A Chrome extension that helps you find and maximize value from sportsbook promotions — bonus bets, risk-free bets, deposit match offers, and odds boosts. Designed to be shared with friends who want to capture free EV without needing to understand the underlying math.
 
-## Calculators
+Opens as a **side panel** so it stays visible while you browse sportsbook pages.
+
+## Features
+
+### Promo Scanner
+Scans live odds across all books and ranks every outcome by bonus bet conversion rate. Set your target odds range (+300–+500 is ideal) and your bonus bet amount, and the scanner finds the best available cross-book hedge for each opportunity.
+
+- Searches a single sport or **all active sports at once**
+- Skips 3-way markets (soccer, etc.) that can't be cleanly hedged
+- Filters hedges to only books in your "My sportsbooks" list
+- Click any result to auto-fill the Bonus Bet calculator
+- Results persist for the browser session — no re-scanning needed when you switch tabs
+
+### Calculators
 
 | Tab | What it does |
 |---|---|
-| **Bonus Bet** | Finds the hedge stake to lock in guaranteed cash from a bonus bet |
-| **Risk-Free** | Calculates expected value of a risk-free / second-chance bet |
-| **Deposit Match** | Determines if a deposit match offer is worth taking after rollover |
-| **Odds Boost** | Checks whether a boosted line is actually +EV vs fair odds |
+| **Bonus Bet** | Computes the hedge stake and guaranteed cash locked from a bonus bet |
+| **Risk-Free** | Expected value of a risk-free / second-chance bet given a conversion rate |
+| **Deposit Match** | Whether a deposit match is worth taking after rollover requirements |
+| **Odds Boost** | Whether a boosted line is actually +EV vs fair market odds |
 
-## Install (Developer Mode)
+Inputs accept American (`-110`, `+200`) or decimal (`1.91`, `3.0`) odds — auto-detected.
 
-1. Open Chrome and go to `chrome://extensions`
+### Settings
+- **The Odds API key** — required for Scanner. Free at [the-odds-api.com](https://the-odds-api.com) (500 requests/month).
+- **My sportsbooks** — select every book you have an account at. The scanner restricts hedge legs to these books so results are always actionable.
+
+### Advanced Mode
+Toggle in the top-right to hide beginner explanations and unlock extra inputs (e.g., custom win probability for risk-free EV).
+
+## Install
+
+1. Go to `chrome://extensions`
 2. Enable **Developer mode** (top-right toggle)
-3. Click **Load unpacked**
-4. Select the `promo-tool/` directory
-5. Click the extension icon in your toolbar
+3. Click **Load unpacked** and select the `promo-tool/` directory
+4. Click the extension icon — the side panel opens and stays open while you browse
+
+## Setup
+
+1. Open Settings (⚙) and paste your Odds API key
+2. Select all the sportsbooks you have accounts at under **My sportsbooks**
+3. Run a scan from the Scanner tab — results filter automatically to books you can use
 
 ## Run Tests
 
@@ -25,38 +52,31 @@ A Chrome extension that calculates the expected value of sportsbook promotions. 
 npm test
 ```
 
-All 13 unit tests cover every calculator formula with hand-verified expected values.
-
 ## Project Structure
 
 ```
 promo-tool/
 ├── manifest.json
-├── package.json
 ├── popup/
-│   ├── popup.html       # Extension UI
+│   ├── popup.html          # Side panel UI
 │   ├── popup.css
-│   └── popup.js         # Tab wiring + result rendering
+│   └── popup.js            # Tab logic, scanner, calculators
 ├── src/
+│   ├── api/
+│   │   └── oddsApi.js      # The Odds API client
 │   ├── calc/
-│   │   ├── odds.js          # Odds conversions (American ↔ decimal)
-│   │   ├── bonusBet.js      # Hedge stake calculator
-│   │   ├── riskFree.js      # EV for risk-free bets
-│   │   ├── depositMatch.js  # Deposit match EV
-│   │   └── oddsBoost.js     # Odds boost EV
+│   │   ├── odds.js         # American ↔ decimal conversions
+│   │   ├── bonusBet.js     # Hedge stake + conversion rate
+│   │   ├── riskFree.js     # Risk-free EV
+│   │   ├── depositMatch.js # Deposit match EV
+│   │   └── oddsBoost.js    # Odds boost EV
 │   └── ui/
-│       └── explanations.js  # Beginner-friendly explainer text
+│       └── explanations.js # Beginner explainer text
+├── background/
+│   └── serviceWorker.js    # Side panel behavior + odds cache
+├── content/
+│   ├── contentScript.js    # Badges live odds on DK/FD pages
+│   └── contentScript.css
 └── test/
     └── calc.test.js
 ```
-
-## Advanced Mode
-
-Toggle **Advanced mode** in the top-right to hide the beginner explanations and access extra inputs (e.g., custom win probability for risk-free bets).
-
-## v2 Ideas
-
-- Auto-fill odds by reading from the DraftKings/FanDuel bet slip (content script)
-- Promo feed: surface current DK/FD offers
-- Kelly stake sizing
-- Mobile web app version (calc logic is already framework-free)

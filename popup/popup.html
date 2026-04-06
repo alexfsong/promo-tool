@@ -39,7 +39,6 @@
 
   <nav class="tabs" role="tablist">
     <button class="tab active" data-tab="scanner" role="tab">Scanner</button>
-    <button class="tab" data-tab="odds" role="tab">Best Odds</button>
     <button class="tab" data-tab="bonus" role="tab">Bonus Bet</button>
     <button class="tab" data-tab="riskfree" role="tab">Risk-Free</button>
     <button class="tab" data-tab="deposit" role="tab">Deposit</button>
@@ -87,36 +86,6 @@
     </div>
 
     <div id="scan-results" class="scan-results hidden"></div>
-  </section>
-
-  <!-- Best Odds -->
-  <section id="tab-odds" class="tab-panel hidden">
-    <p class="tagline">Find the best available odds across all books.</p>
-
-    <div class="field">
-      <label for="odds-sport">Sport</label>
-      <select id="odds-sport">
-        <option value="americanfootball_nfl">NFL</option>
-        <option value="basketball_nba">NBA</option>
-        <option value="baseball_mlb">MLB</option>
-        <option value="icehockey_nhl">NHL</option>
-      </select>
-    </div>
-
-    <button class="calc-btn" id="odds-load">Load Games</button>
-
-    <div id="odds-game-field" class="field hidden">
-      <label for="odds-game">Game</label>
-      <select id="odds-game"></select>
-    </div>
-
-    <div id="odds-result" class="odds-result hidden"></div>
-
-    <div class="use-odds hidden" id="use-odds-row">
-      <span class="use-odds-label">Use these odds in:</span>
-      <button class="use-btn" data-target="bonus">Bonus Bet</button>
-      <button class="use-btn" data-target="boost">Odds Boost</button>
-    </div>
   </section>
 
   <!-- Bonus Bet -->
