@@ -25,6 +25,16 @@ Deposit Match / Odds Boost) as the **default** entrypoint for converting a
 promo. The four calculators are not deleted; they move behind an "open
 calculator" affordance for power users.
 
+## Clarifications
+
+### Session 2026-05-12
+
+- Q: Where does the EV view live in the UI? → A: A dedicated tab in the side panel, visible only when Advanced Mode is on; hidden in Beginner default.
+- Q: How does the Best Play card handle a Bet & Get promo's qualifying-bet stage? → A: Mode-dependent. Beginner Mode: hedge both stages (qualifying bet + bonus bet on credit) for a guaranteed floor. Advanced Mode: skip the qualifying-bet hedge, place qualifying unhedged on the +EV side, hedge only the bonus once credited; tool shows the resulting net EV.
+- Q: Where does the promo-type registry live? → A: `src/promos/registry.js`. New top-level module that imports calculators from `src/calc/`, exports user-facing labels + field shapes + calculator wiring. Spec 003's recipe library also lands under `src/promos/`.
+- Q: How does the user reach the legacy four calculator tabs? → A: Link in Settings labeled "Open calculators". Not a default-visible tab. Keeps the main surface clean while preserving the safety-net fallback for the maintainer.
+- Q: On a partial bet-slip paste, what does the card do? → A: Pre-fill the parsed fields, then ask the user to confirm the missing piece (typically event selection from a short list of currently scanned events). No silent auto-match against scanner data — prevents wrong-event picks when team names collide.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 — Convert a bonus bet with one card (Priority: P1)
@@ -108,12 +118,18 @@ existing promo types.
    **Then** only the fields needed for that promo type are visible (e.g.,
    Deposit Match shows the deposit amount and rollover requirement; it
    does not show hedge book selection until rollover is unlocked).
-3. **Given** the user picks "Bet & Get bonus bets" (an offer that pays
-   bonus bets if the qualifying bet wins),
+3. **Given** the user picks "Bet & Get bonus bets" in **Beginner Mode**,
    **When** they enter the qualifying bet amount and the bonus amount,
-   **Then** the extension produces a Best Play that accounts for both
-   stages: the qualifying-bet leg + hedge, and the planned conversion of
-   the bonus once received.
+   **Then** the extension produces a Best Play with **two hedge plans**:
+   (a) the qualifying-bet leg + cross-book hedge so the user is never
+   exposed during stage 1; (b) a deferred plan for the bonus bet to be
+   actioned once it credits. The headline locked-cash is the worst-case
+   sum across both stages.
+4. **Given** the user picks "Bet & Get bonus bets" in **Advanced Mode**,
+   **When** they enter the qualifying bet amount and the bonus amount,
+   **Then** the extension shows the qualifying bet as an **unhedged**
+   +EV play (with EV displayed), and a deferred plan to hedge only the
+   bonus once it credits. Headline is **net EV**, not locked cash.
 
 ---
 
@@ -140,11 +156,18 @@ manual entry without losing what was already typed.
    **When** they paste into the Best Play card's "paste bet slip" field,
    **Then** event name, selection name, and odds are auto-filled, and the
    detected sportsbook is highlighted as the +EV leg book.
-2. **Given** the pasted text cannot be parsed,
+2. **Given** the parser extracts some fields but not others (e.g.,
+   selection + odds but no event identifier),
+   **When** the user submits the paste,
+   **Then** the recognized fields are pre-filled and the card asks the
+   user to confirm the missing piece (e.g., pick the event from a short
+   list of currently scanned events). The system MUST NOT silently
+   auto-match against scanner data.
+3. **Given** the pasted text cannot be parsed at all,
    **When** parsing fails,
-   **Then** the extension shows a single short message and the user's
-   pasted text remains so they can keep what they had; no inputs are
-   wiped.
+   **Then** the extension shows a single short message; existing input
+   values are preserved and the original pasted text remains visible so
+   the user can keep what they had. No inputs are wiped.
 
 ---
 
@@ -171,15 +194,15 @@ without showing locked-cash as a peer metric.
    **Then** it is labeled "Guaranteed locked" (or equivalent
    worst-case phrasing) in dollars and cents, never "EV", never
    "expected value", never a probability-weighted number.
-2. **Given** the user opens the EV view,
+2. **Given** the user opens the EV tab (Advanced Mode on),
    **When** EV is displayed,
-   **Then** the locked-cash headline is not shown on the same card;
+   **Then** the locked-cash headline is not shown on the same view;
    EV stands alone, labeled explicitly as "if the bonus bet converts at
    your assumed rate" (or analogous per promo type).
 3. **Given** the user is in Beginner Mode (the default),
    **When** they look anywhere in the extension,
-   **Then** EV is not visible without an explicit toggle into Advanced
-   or the EV view.
+   **Then** the EV tab is not visible and EV does not appear elsewhere
+   in the UI. Toggling Advanced Mode reveals the tab.
 
 ---
 
@@ -230,14 +253,18 @@ without showing locked-cash as a peer metric.
 - **FR-006**: System MUST round each hedge stake to $0.01. Per-book stake
   increments and minimums are out of scope here; spec 002 owns them.
 - **FR-007**: System MUST NOT show EV on the Best Play card or any
-  default-Beginner view. EV MUST be available only in a dedicated EV
-  view reachable from a clearly labeled affordance, or in Advanced Mode.
+  default-Beginner view. EV MUST be available only via a dedicated
+  side-panel tab that is hidden by default and revealed when Advanced
+  Mode is toggled on.
 - **FR-008**: System MUST default Beginner Mode on first launch. Advanced
   Mode MUST be a single toggle in settings, not a per-card toggle.
 - **FR-009**: System MUST allow the user to paste sportsbook bet-slip
   text into a single field and MUST attempt to extract event, selection,
-  and odds. On parse failure, system MUST preserve the user's pasted
-  text and existing field values.
+  and odds. On full parse failure, system MUST preserve the user's pasted
+  text and existing field values. On partial parse, the system MUST
+  pre-fill the recognized fields and prompt the user to confirm the
+  missing piece (typically event selection); it MUST NOT silently
+  auto-match against scanner data.
 - **FR-010**: System MUST recommend only cross-book hedges (the +EV leg
   and the hedge leg on different sportsbooks). It MUST NOT recommend
   same-book hedges.
@@ -245,8 +272,8 @@ without showing locked-cash as a peer metric.
   contains fewer than two books — the card MUST explain this in one
   sentence and route to Settings.
 - **FR-012**: System MUST keep the four legacy calculator tabs reachable
-  for power users (e.g., behind a "calculators" link), but they MUST NOT
-  be the default surface.
+  via a single "Open calculators" link in Settings. The legacy tabs
+  MUST NOT appear as a default-visible tab in the side panel.
 - **FR-013**: System MUST display the recommended hedge with the cash
   stake the user types into the book's slip — not a pre-tax amount,
   bonus-bet face value, or implied-probability number.
@@ -255,6 +282,13 @@ without showing locked-cash as a peer metric.
   calculator or numeric zero.
 - **FR-015**: System MUST persist the selected promo type and Beginner /
   Advanced state across sessions via `chrome.storage.local`.
+- **FR-016**: For "Bet & Get" promos, system MUST branch on mode.
+  Beginner Mode: produce a two-stage hedge plan (qualifying-bet hedge +
+  deferred bonus-bet plan) with a worst-case locked-cash headline.
+  Advanced Mode: produce an unhedged qualifying-bet play + deferred
+  bonus-bet hedge plan, with a net-EV headline. This is the **only**
+  case in this spec where a non-locked-cash headline appears, and it
+  appears only in Advanced Mode.
 
 ### Key Entities
 
@@ -273,7 +307,8 @@ without showing locked-cash as a peer metric.
   spec 002 and out of scope here.
 - **Promo type definition**: A registry entry mapping
   user-facing-promo-name → pure-calculator module → required input
-  fields. Lives alongside `src/calc/`.
+  fields. Lives in `src/promos/registry.js`. The `src/promos/` directory
+  is new in this spec and will also host spec 003's recipe library.
 
 ## Success Criteria *(mandatory)*
 
