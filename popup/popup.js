@@ -4,21 +4,60 @@ import { riskFreeEV } from '../src/calc/riskFree.js';
 import { depositMatchEV } from '../src/calc/depositMatch.js';
 import { oddsBoostEV } from '../src/calc/oddsBoost.js';
 import { explanations } from '../src/ui/explanations.js';
-import { fetchForContentScript, fetchActiveSports, getApiKey, saveApiKey } from '../src/api/oddsApi.js';
+import { fetchOdds, fetchSports, getApiKey, saveApiKey } from '../src/api/provider.js';
+import { promoRegistry, getPromoType } from '../src/promos/registry.js';
+import {
+  recommendBonusBet,
+  recommendRiskFree,
+  recommendDepositMatch,
+  recommendOddsBoost,
+  recommendBetAndGet,
+  EMPTY_STATE_NO_PLAY,
+  EMPTY_STATE_NEED_BOOKS,
+} from '../src/promos/recommend.js';
+import { parseBetSlip, PARSE_PARLAY } from '../src/parsers/betSlip.js';
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
-document.querySelectorAll('.tab').forEach(btn => {
+// Top-level tabs. Legacy calculators use their own data-legacy-tab attribute
+// and live inside #legacy-calcs (reached from Settings only — FR-012).
+document.querySelectorAll('nav.tabs > .tab[data-tab]').forEach(btn => {
   btn.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.tab-panel').forEach(p => p.classList.add('hidden'));
+    document.querySelectorAll('nav.tabs > .tab[data-tab]').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('section.tab-panel:not(.legacy-panel)').forEach(p => p.classList.add('hidden'));
     btn.classList.add('active');
     document.getElementById(`tab-${btn.dataset.tab}`).classList.remove('hidden');
+    if (btn.dataset.tab === 'ev') renderEvTab();
   });
 });
 
-// ── Advanced toggle ───────────────────────────────────────────────────────────
-document.getElementById('advancedToggle').addEventListener('change', e => {
-  document.body.classList.toggle('advanced', e.target.checked);
+// ── Advanced mode (Beginner is default — FR-008) ──────────────────────────────
+const headerToggle = document.getElementById('advancedToggle');
+const settingsToggle = document.getElementById('advancedToggleSettings');
+
+function applyAdvancedMode(on) {
+  document.body.classList.toggle('advanced', on);
+  headerToggle.checked = on;
+  settingsToggle.checked = on;
+  // If Beginner and the EV/Scanner tab is currently active, fall back to Best Play.
+  if (!on) {
+    const activeTab = document.querySelector('nav.tabs > .tab.active');
+    if (activeTab && activeTab.dataset.advancedOnly === 'true') {
+      document.querySelector('nav.tabs > .tab[data-tab="bestplay"]').click();
+    }
+  }
+}
+
+chrome.storage.local.get('advancedMode', ({ advancedMode }) => {
+  // Default Beginner. Only previously-toggled-on users land in Advanced.
+  applyAdvancedMode(advancedMode === true);
+});
+
+[headerToggle, settingsToggle].forEach(el => {
+  el.addEventListener('change', () => {
+    const on = el.checked;
+    applyAdvancedMode(on);
+    chrome.storage.local.set({ advancedMode: on });
+  });
 });
 
 // ── Settings panel ────────────────────────────────────────────────────────────
@@ -37,6 +76,26 @@ document.getElementById('saveApiKey').addEventListener('click', async () => {
   const saved = document.getElementById('apiKeySaved');
   saved.classList.remove('hidden');
   setTimeout(() => saved.classList.add('hidden'), 2000);
+});
+
+// Legacy calculators open/close
+const legacyCalcs = document.getElementById('legacy-calcs');
+document.getElementById('openCalculatorsLink').addEventListener('click', () => {
+  legacyCalcs.classList.remove('hidden');
+  settingsPanel.classList.add('hidden');
+});
+document.getElementById('closeLegacyCalcs').addEventListener('click', () => {
+  legacyCalcs.classList.add('hidden');
+});
+
+// Legacy tab switching (independent of top-level tabs)
+document.querySelectorAll('.tab[data-legacy-tab]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab[data-legacy-tab]').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.legacy-panel').forEach(p => p.classList.add('hidden'));
+    btn.classList.add('active');
+    document.getElementById(`tab-${btn.dataset.legacyTab}`).classList.remove('hidden');
+  });
 });
 
 // ── Searchable select ─────────────────────────────────────────────────────────
@@ -90,7 +149,6 @@ function makeSearchableSelect(select) {
   input.addEventListener('input', () => { buildList(input.value); list.classList.remove('ss-hidden'); });
   input.addEventListener('blur', () => setTimeout(() => list.classList.add('ss-hidden'), 150));
 
-  // Call after options change to sync display text and rebuild
   wrapper.rebuild = () => {
     input.value = select.options[select.selectedIndex]?.text ?? '';
   };
@@ -98,29 +156,25 @@ function makeSearchableSelect(select) {
   return wrapper;
 }
 
-// ── Sport dropdowns (dynamic) ─────────────────────────────────────────────────
-
 const scanSportSS = makeSearchableSelect(document.getElementById('scan-sport'));
 
 async function initSportDropdowns() {
   const apiKey = await getApiKey();
-  if (!apiKey) return; // keep hardcoded fallback options
+  if (!apiKey) return;
 
   let sports;
   try {
-    sports = await fetchActiveSports(apiKey);
+    sports = await fetchSports();
   } catch (e) {
-    return; // silently keep hardcoded fallback
+    return;
   }
 
-  // Group by API "group" field
   const groups = {};
   for (const s of sports) {
     if (!groups[s.group]) groups[s.group] = [];
     groups[s.group].push(s);
   }
 
-  // Priority group order
   const ORDER = [
     'American Football', 'Basketball', 'Baseball', 'Ice Hockey',
     'Tennis', 'Soccer', 'MMA', 'Boxing',
@@ -142,26 +196,8 @@ async function initSportDropdowns() {
 
 initSportDropdowns();
 
-// Restore last scan results if the side panel was closed and reopened this session
-chrome.storage.session.get(['scanEvents', 'scanParams'], ({ scanEvents, scanParams }) => {
-  if (!scanEvents?.length || !scanParams) return;
-  window._scanEvents = scanEvents;
-  window._scanParams = scanParams;
-  document.getElementById('scan-min').value = scanParams.minOdds;
-  document.getElementById('scan-max').value = scanParams.maxOdds;
-  document.getElementById('scan-amount').value = scanParams.bonusAmount;
-  const allBooks = extractBooks(scanEvents);
-  const books = myBooksSet.size > 0 ? allBooks.filter(b => myBooksSet.has(b)) : allBooks;
-  chrome.storage.local.get('selectedBooks', d => {
-    const savedSelection = d.selectedBooks ? new Set(d.selectedBooks) : new Set(books);
-    renderBookChips(books, savedSelection);
-    applyFilter();
-  });
-});
-
 // ── My sportsbooks (settings) ─────────────────────────────────────────────────
 
-// Well-known US books — used to seed the chips before any scan runs
 const DEFAULT_BOOKS = [
   'bet365', 'BetMGM', 'BetRivers', 'Bovada', 'Caesars',
   'DraftKings', 'ESPN Bet', 'Fanatics', 'FanDuel',
@@ -195,7 +231,6 @@ async function loadMyBooks() {
   renderMyBooksChips(known);
 }
 
-// After a scan, merge any newly seen books into the settings chips
 function mergeKnownBooks(books) {
   chrome.storage.local.get('knownBooks', d => {
     const known = [...new Set([...DEFAULT_BOOKS, ...(d.knownBooks || []), ...books])].sort();
@@ -206,11 +241,374 @@ function mergeKnownBooks(books) {
 
 loadMyBooks();
 
-// ── Promo Scanner ─────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const fmt = n => `$${Math.abs(n).toFixed(2)}`;
+const fmtSigned = n => `${n >= 0 ? '+' : '-'}$${Math.abs(n).toFixed(2)}`;
+const pct = n => `${(n * 100).toFixed(1)}%`;
+const fmtAmerican = n => n > 0 ? `+${n}` : `${n}`;
 
-// Find all outcomes in [minOdds, maxOdds] across all books, pair each with the
-// best available hedge on the opposite side, and rank by bonus bet conversion rate.
-// Extract unique bookmaker names from fetched events
+// ── Best Play tab ─────────────────────────────────────────────────────────────
+
+const bpPromoSelect = document.getElementById('bp-promo-type');
+const bpBlurb = document.getElementById('bp-promo-blurb');
+const bpFieldsContainer = document.getElementById('bp-fields');
+const bpCard = document.getElementById('bp-card');
+const bpStatus = document.getElementById('bp-status');
+const bpPaste = document.getElementById('bp-paste');
+const bpPasteStatus = document.getElementById('bp-paste-status');
+const bpPasteConfirm = document.getElementById('bp-paste-confirm');
+
+let lastBestPlayByPromo = {}; // for EV tab
+let lastProviderEvents = null;
+
+function buildPromoPicker() {
+  bpPromoSelect.innerHTML = '';
+  for (const p of promoRegistry) {
+    const opt = document.createElement('option');
+    opt.value = p.id;
+    opt.textContent = p.label;
+    bpPromoSelect.appendChild(opt);
+  }
+}
+
+function renderPromoFields(promoTypeId) {
+  const promo = getPromoType(promoTypeId);
+  if (!promo) {
+    bpFieldsContainer.innerHTML = '';
+    bpBlurb.textContent = '';
+    return;
+  }
+  bpBlurb.textContent = promo.blurb;
+  bpFieldsContainer.innerHTML = '';
+  for (const f of promo.fields) {
+    const wrap = document.createElement('div');
+    wrap.className = 'field';
+
+    const label = document.createElement('label');
+    label.textContent = f.label;
+    label.setAttribute('for', `bpf-${f.id}`);
+    wrap.appendChild(label);
+
+    if (f.type === 'oddsRange') {
+      const row = document.createElement('div');
+      row.className = 'range-row';
+      const [lo, hi] = f.default ?? [300, 500];
+      const inLow = document.createElement('input');
+      inLow.type = 'number';
+      inLow.id = `bpf-${f.id}-low`;
+      inLow.value = lo;
+      const inHigh = document.createElement('input');
+      inHigh.type = 'number';
+      inHigh.id = `bpf-${f.id}-high`;
+      inHigh.value = hi;
+      const wrapLow = document.createElement('div'); wrapLow.className = 'field';
+      const labLow = document.createElement('label'); labLow.textContent = 'Min'; wrapLow.appendChild(labLow); wrapLow.appendChild(inLow);
+      const wrapHigh = document.createElement('div'); wrapHigh.className = 'field';
+      const labHigh = document.createElement('label'); labHigh.textContent = 'Max'; wrapHigh.appendChild(labHigh); wrapHigh.appendChild(inHigh);
+      row.appendChild(wrapLow);
+      row.appendChild(wrapHigh);
+      wrap.appendChild(row);
+    } else if (f.type === 'percent') {
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.id = `bpf-${f.id}`;
+      input.min = 0;
+      input.max = 100;
+      input.step = 1;
+      input.value = f.default != null ? Math.round(f.default * 100) : '';
+      wrap.appendChild(input);
+      const hint = document.createElement('span');
+      hint.className = 'hint';
+      hint.textContent = 'Enter as %, e.g. 70 = 0.70.';
+      wrap.appendChild(hint);
+    } else if (f.type === 'odds') {
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.id = `bpf-${f.id}`;
+      input.placeholder = '+200 or -110';
+      wrap.appendChild(input);
+    } else {
+      // money or fallback
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.id = `bpf-${f.id}`;
+      input.min = 0;
+      input.step = 1;
+      input.placeholder = f.default != null ? String(f.default) : '';
+      if (f.default != null && typeof f.default !== 'object') input.value = f.default;
+      wrap.appendChild(input);
+    }
+    bpFieldsContainer.appendChild(wrap);
+  }
+}
+
+function readPromoInputs(promoTypeId) {
+  const promo = getPromoType(promoTypeId);
+  if (!promo) return null;
+  const inputs = { promoTypeId };
+  for (const f of promo.fields) {
+    if (f.type === 'oddsRange') {
+      const lo = parseFloat(document.getElementById(`bpf-${f.id}-low`).value);
+      const hi = parseFloat(document.getElementById(`bpf-${f.id}-high`).value);
+      inputs[f.id] = [lo, hi];
+    } else if (f.type === 'percent') {
+      const v = parseFloat(document.getElementById(`bpf-${f.id}`).value);
+      inputs[f.id] = Number.isFinite(v) ? v / 100 : f.default;
+    } else if (f.type === 'odds') {
+      const raw = document.getElementById(`bpf-${f.id}`).value;
+      const d = parseOdds(raw);
+      inputs[f.id] = Number.isFinite(d) ? decimalToAmerican(d) : NaN;
+    } else {
+      const v = parseFloat(document.getElementById(`bpf-${f.id}`).value);
+      inputs[f.id] = v;
+    }
+  }
+  inputs.mode = document.body.classList.contains('advanced') ? 'advanced' : 'beginner';
+  return inputs;
+}
+
+buildPromoPicker();
+
+chrome.storage.local.get('promoType', ({ promoType }) => {
+  const id = promoType && promoRegistry.find(p => p.id === promoType) ? promoType : promoRegistry[0].id;
+  bpPromoSelect.value = id;
+  renderPromoFields(id);
+});
+
+bpPromoSelect.addEventListener('change', () => {
+  const id = bpPromoSelect.value;
+  chrome.storage.local.set({ promoType: id });
+  renderPromoFields(id);
+  bpCard.classList.add('hidden');
+});
+
+// Fetch provider events on demand. Cache for the session.
+async function fetchAllEvents() {
+  const apiKey = await getApiKey();
+  if (!apiKey) {
+    bpStatus.textContent = 'Add your API key in Settings (⚙) first.';
+    bpStatus.className = 'odds-error';
+    bpStatus.classList.remove('hidden');
+    return null;
+  }
+  bpStatus.textContent = 'Scanning the markets…';
+  bpStatus.className = 'odds-loading';
+  bpStatus.classList.remove('hidden');
+
+  let activeSports;
+  try {
+    activeSports = await fetchSports();
+  } catch (err) {
+    bpStatus.textContent = `Couldn't reach the odds source — check Settings. (${err.message})`;
+    bpStatus.className = 'odds-error';
+    return null;
+  }
+  const sportKeys = activeSports.map(s => s.key);
+  const settled = await Promise.allSettled(sportKeys.map(k => fetchOdds(k)));
+  const events = settled.flatMap(r => r.status === 'fulfilled' ? r.value : []);
+  bpStatus.classList.add('hidden');
+  lastProviderEvents = events;
+  // Persist book names so chips know about them.
+  const books = new Set();
+  for (const ev of events) for (const bm of ev.bookmakers || []) books.add(bm.title);
+  mergeKnownBooks([...books]);
+  return events;
+}
+
+function recommend(promoTypeId, inputs, events, userBooks) {
+  switch (promoTypeId) {
+    case 'bonus-bet':     return recommendBonusBet(inputs, events, userBooks);
+    case 'bet-and-get':   return recommendBetAndGet(inputs, events, userBooks);
+    case 'risk-free':     return recommendRiskFree(inputs, events, userBooks);
+    case 'deposit-match': return recommendDepositMatch(inputs, events, userBooks);
+    case 'profit-boost':  return recommendOddsBoost(inputs, events, userBooks);
+    default: return null;
+  }
+}
+
+function renderEmptyState(kind) {
+  bpCard.classList.remove('hidden');
+  if (kind === EMPTY_STATE_NEED_BOOKS) {
+    bpCard.innerHTML = `<div class="bp-empty">
+      <div>You need at least two sportsbooks in <strong>My sportsbooks</strong> to lock in cash with a cross-book hedge.</div>
+      <button class="bp-empty-action" id="bp-open-settings">Open Settings</button>
+    </div>`;
+    document.getElementById('bp-open-settings').addEventListener('click', () => {
+      settingsPanel.classList.remove('hidden');
+    });
+    return;
+  }
+  bpCard.innerHTML = `<div class="bp-empty">
+    <div>No conversion above $0 right now for these inputs. Try widening the odds range, raising the amount, or re-scanning later.</div>
+    <button class="bp-empty-action" id="bp-rescan">Re-scan</button>
+  </div>`;
+  document.getElementById('bp-rescan').addEventListener('click', () => {
+    lastProviderEvents = null;
+    document.getElementById('bp-go').click();
+  });
+}
+
+function renderBestPlayCard(play, promoTypeId) {
+  const isAdvancedHeadline = play.headline.kind === 'netEV';
+  const headlineLabel = isAdvancedHeadline ? 'Net EV (Advanced)' : 'Guaranteed locked';
+  const headlineAmount = isAdvancedHeadline
+    ? fmtSigned(play.headline.amount)
+    : fmt(play.headline.amount);
+
+  let evLegHtml = '';
+  if (play.evLeg) {
+    const stakeLine = play.evLeg.stakeKind === 'bonusBet'
+      ? `Place your <strong>bonus bet</strong> on this side.`
+      : `Stake <strong>${fmt(play.evLeg.stake ?? 0)}</strong> cash.`;
+    evLegHtml = `
+      <div class="bp-leg">
+        <span class="bp-leg-label">Place this bet</span>
+        <span class="bp-leg-book">${play.evLeg.book}</span>
+        <div class="bp-leg-event">${play.evLeg.event.away} @ ${play.evLeg.event.home}</div>
+        <div class="bp-leg-line">
+          <span class="bp-leg-selection">${play.evLeg.selection}</span>
+          <span class="bp-leg-odds">${fmtAmerican(play.evLeg.odds)}</span>
+        </div>
+        <div class="bp-leg-stake">${stakeLine}</div>
+      </div>`;
+  }
+
+  let hedgeHtml = '';
+  for (const leg of play.hedgeLegs) {
+    hedgeHtml += `
+      <div class="bp-leg">
+        <span class="bp-leg-label">Then hedge here</span>
+        <span class="bp-leg-book">${leg.book}</span>
+        <div class="bp-leg-event">${leg.event.away} @ ${leg.event.home}</div>
+        <div class="bp-leg-line">
+          <span class="bp-leg-selection">${leg.selection}</span>
+          <span class="bp-leg-odds">${fmtAmerican(leg.odds)}</span>
+        </div>
+        <div class="bp-leg-stake">Stake <strong>${fmt(leg.cashStake)}</strong> cash.</div>
+      </div>`;
+  }
+
+  let stage2Html = '';
+  if (play.stage2) {
+    const s2 = play.stage2;
+    stage2Html = `
+      <div class="bp-stage2">
+        <div class="bp-stage2-label">Stage 2 — if your qualifying bet wins</div>
+        <div>Use the credited bonus bet on <strong>${s2.evSelection}</strong> at <strong>${s2.book}</strong> (${fmtAmerican(s2.evOdds)}).</div>
+        <div>Then hedge <strong>${fmt(s2.hedgeCashStake)}</strong> cash on <strong>${s2.hedgeSelection}</strong> at <strong>${s2.hedgeBook}</strong> (${fmtAmerican(s2.hedgeOdds)}).</div>
+      </div>`;
+  }
+
+  bpCard.classList.remove('hidden');
+  bpCard.innerHTML = `
+    <div class="bp-card${isAdvancedHeadline ? ' advanced-headline' : ''}">
+      <div class="bp-headline">
+        <span class="bp-headline-label">${headlineLabel}</span>
+        <span class="bp-headline-amount">${headlineAmount}</span>
+      </div>
+      ${evLegHtml}
+      ${hedgeHtml}
+      ${stage2Html}
+      <details class="bp-details">
+        <summary>Show details</summary>
+        <div class="bp-details-body">${play.showDetails.formulaLine}</div>
+      </details>
+    </div>`;
+
+  // Track this BestPlay for the EV tab (Advanced only).
+  lastBestPlayByPromo[promoTypeId] = play;
+}
+
+document.getElementById('bp-go').addEventListener('click', async () => {
+  const promoTypeId = bpPromoSelect.value;
+  const inputs = readPromoInputs(promoTypeId);
+  if (!inputs) return;
+
+  bpCard.classList.add('hidden');
+  const events = lastProviderEvents ?? await fetchAllEvents();
+  if (!events) return;
+
+  const userBooks = [...myBooksSet];
+  const play = recommend(promoTypeId, inputs, events, userBooks);
+
+  if (!play) {
+    bpStatus.textContent = 'Please fill in all required fields with valid values.';
+    bpStatus.className = 'odds-error';
+    bpStatus.classList.remove('hidden');
+    return;
+  }
+  if (play === EMPTY_STATE_NEED_BOOKS || play === EMPTY_STATE_NO_PLAY) {
+    return renderEmptyState(play);
+  }
+  renderBestPlayCard(play, promoTypeId);
+});
+
+// ── Bet-slip paste handling ───────────────────────────────────────────────────
+bpPaste.addEventListener('paste', () => setTimeout(handlePaste, 10));
+
+function handlePaste() {
+  const text = bpPaste.value;
+  if (!text.trim()) {
+    bpPasteStatus.textContent = '';
+    bpPasteConfirm.classList.add('hidden');
+    return;
+  }
+  const parsed = parseBetSlip(text);
+
+  if (parsed === PARSE_PARLAY) {
+    bpPasteStatus.textContent = "Parlays aren't supported yet — paste a single-leg straight bet.";
+    bpPasteConfirm.classList.add('hidden');
+    return;
+  }
+
+  const recognized = [];
+  if (parsed.book) recognized.push(`book: ${parsed.book}`);
+  if (parsed.odds != null) recognized.push(`odds: ${fmtAmerican(parsed.odds)}`);
+  if (parsed.selection) recognized.push(`selection: ${parsed.selection}`);
+  if (parsed.event) recognized.push(`event: ${parsed.event.away} @ ${parsed.event.home}`);
+  if (parsed.market) recognized.push(`market: ${parsed.market}`);
+
+  if (!recognized.length) {
+    bpPasteStatus.textContent = "Couldn't read that bet slip. Paste a DraftKings or FanDuel single-leg slip, or fill the fields above by hand.";
+    bpPasteConfirm.classList.add('hidden');
+    return;
+  }
+
+  bpPasteStatus.textContent = `Picked up: ${recognized.join(' · ')}.`;
+
+  const missing = !parsed.event ? 'event' : (!parsed.selection ? 'selection' : null);
+  if (missing) {
+    bpPasteConfirm.classList.remove('hidden');
+    bpPasteConfirm.innerHTML = `Couldn't read the <strong>${missing}</strong> from your paste. Type it into the fields above before tapping <em>Find best play</em> — we won't guess against scanned events.`;
+  } else {
+    bpPasteConfirm.classList.add('hidden');
+  }
+}
+
+// ── EV tab (Advanced-only — FR-007) ───────────────────────────────────────────
+
+function renderEvTab() {
+  const container = document.getElementById('ev-content');
+  const entries = Object.entries(lastBestPlayByPromo);
+  if (!entries.length) {
+    container.innerHTML = `<div class="hint">Run a Best Play first. EV per promo type will appear here.</div>`;
+    return;
+  }
+  container.innerHTML = entries
+    .filter(([_, play]) => play && play.showDetails?.ev != null)
+    .map(([id, play]) => {
+      const promo = getPromoType(id);
+      return `<div class="ev-row">
+        <span class="ev-row-label">${promo?.label ?? id}</span>
+        <span class="ev-row-value">${fmtSigned(play.showDetails.ev)}</span>
+      </div>
+      <div class="hint" style="margin-top:-4px;padding-left:12px;">if the bonus bet converts at your assumed rate</div>`;
+    })
+    .join('') || `<div class="hint">No EV data for the promo types you've run yet.</div>`;
+}
+
+// ── Legacy: Promo Scanner (Advanced-only tab) ─────────────────────────────────
+
 function extractBooks(events) {
   const books = new Set();
   for (const event of events) {
@@ -258,7 +656,7 @@ function applyFilter() {
 
 function findPromoOpportunities(events, { minOdds, maxOdds, bonusAmount, backFilter, layFilter }) {
   const results = [];
-  const seen = new Set(); // dedupe: event+outcome+backBook
+  const seen = new Set();
 
   for (const event of events) {
     for (const bm of event.bookmakers || []) {
@@ -267,19 +665,15 @@ function findPromoOpportunities(events, { minOdds, maxOdds, bonusAmount, backFil
 
       for (let i = 0; i < market.outcomes.length; i++) {
         const outcome = market.outcomes[i];
-        const backOdds = outcome.price; // American
+        const backOdds = outcome.price;
 
         if (backOdds < minOdds || backOdds > maxOdds) continue;
-
-        // Filter by selected back books (if any selected)
         if (backFilter?.size && !backFilter.has(bm.title)) continue;
 
-        // Dedupe: same outcome at same book shouldn't appear twice
         const key = `${event.id}|${outcome.name}|${bm.title}`;
         if (seen.has(key)) continue;
         seen.add(key);
 
-        // Find best lay odds (opposite outcome) across ALL books
         const oppOutcome = market.outcomes.find((_, idx) => idx !== i);
         if (!oppOutcome) continue;
         const oppName = oppOutcome.name;
@@ -288,13 +682,12 @@ function findPromoOpportunities(events, { minOdds, maxOdds, bonusAmount, backFil
         let bestLayBook = null;
 
         for (const bm2 of event.bookmakers || []) {
-          if (bm2.title === bm.title) continue; // hedge must be a different book
-          if (layFilter?.size && !layFilter.has(bm2.title)) continue; // hedge must be at one of my books
+          if (bm2.title === bm.title) continue;
+          if (layFilter?.size && !layFilter.has(bm2.title)) continue;
           const mkt2 = (bm2.markets || []).find(m => m.key === 'h2h');
           if (!mkt2) continue;
           const opp = mkt2.outcomes.find(o => o.name === oppName);
           if (!opp) continue;
-          // Higher is better for the lay (we get more back if the hedge wins)
           if (bestLayOdds === null || opp.price > bestLayOdds) {
             bestLayOdds = opp.price;
             bestLayBook = bm2.title;
@@ -330,7 +723,6 @@ function findPromoOpportunities(events, { minOdds, maxOdds, bonusAmount, backFil
   return results;
 }
 
-// When the target range yields nothing, find best opportunities from all positive odds.
 function findFallbackOpportunities(events, { bonusAmount, backFilter, layFilter, excludeMin, excludeMax }) {
   return findPromoOpportunities(events, {
     minOdds: 110,
@@ -391,11 +783,13 @@ function renderScanResults(opportunities, fallback = []) {
 
   container.querySelectorAll('.scan-card').forEach(card => {
     card.addEventListener('click', () => {
+      // Click → open legacy Bonus Bet calculator pre-filled.
       const op = allOps[parseInt(card.dataset.idx)];
+      legacyCalcs.classList.remove('hidden');
+      document.querySelector('.tab[data-legacy-tab="bonus"]').click();
       document.getElementById('bonus-amount').value = op.bonusAmount;
       document.getElementById('bonus-back').value = fmtAmerican(op.backOdds);
       document.getElementById('bonus-lay').value = fmtAmerican(op.layOdds);
-      document.querySelector('[data-tab="bonus"]').click();
       document.getElementById('bonus-calc').click();
     });
   });
@@ -429,7 +823,7 @@ document.getElementById('scan-load').addEventListener('click', async () => {
     if (sport === '__all__') {
       let activeSports;
       try {
-        activeSports = await fetchActiveSports(apiKey);
+        activeSports = await fetchSports();
       } catch (err) {
         statusEl.textContent = err.message;
         statusEl.className = 'odds-error';
@@ -438,9 +832,7 @@ document.getElementById('scan-load').addEventListener('click', async () => {
       }
       const sportKeys = activeSports.map(s => s.key);
       statusEl.textContent = `Scanning ${sportKeys.length} sports…`;
-      const settled = await Promise.allSettled(
-        sportKeys.map(k => fetchForContentScript(k, apiKey))
-      );
+      const settled = await Promise.allSettled(sportKeys.map(k => fetchOdds(k)));
       events = settled.flatMap(r => r.status === 'fulfilled' ? r.value : []);
       if (!events.length) {
         statusEl.textContent = 'No active markets found across any sport.';
@@ -450,7 +842,7 @@ document.getElementById('scan-load').addEventListener('click', async () => {
       }
     } else {
       try {
-        events = await fetchForContentScript(sport, apiKey);
+        events = await fetchOdds(sport);
       } catch (err) {
         if (err.status === 404) {
           statusEl.textContent = 'No active markets for this sport right now. Try another.';
@@ -463,17 +855,14 @@ document.getElementById('scan-load').addEventListener('click', async () => {
     }
     statusEl.style.display = 'none';
 
-    // Store globally so book filter chips can re-run without re-fetching
     window._scanEvents = events;
     window._scanParams = { minOdds, maxOdds, bonusAmount };
 
-    // Persist scan state for side panel session resume
     chrome.storage.session.set({ scanEvents: events, scanParams: { minOdds, maxOdds, bonusAmount } });
 
     const allBooks = extractBooks(events);
-    mergeKnownBooks(allBooks); // add newly seen books to settings chips
+    mergeKnownBooks(allBooks);
 
-    // Back-book chips: if my books configured, only show books I have; else all
     const books = myBooksSet.size > 0 ? allBooks.filter(b => myBooksSet.has(b)) : allBooks;
     const stored = await new Promise(r => chrome.storage.local.get('selectedBooks', d => r(d.selectedBooks)));
     const savedSelection = stored ? new Set(stored) : new Set(books);
@@ -487,16 +876,28 @@ document.getElementById('scan-load').addEventListener('click', async () => {
   }
 });
 
-// ── Populate explainer text ───────────────────────────────────────────────────
+// Restore last scan results if the side panel was closed and reopened this session
+chrome.storage.session.get(['scanEvents', 'scanParams'], ({ scanEvents, scanParams }) => {
+  if (!scanEvents?.length || !scanParams) return;
+  window._scanEvents = scanEvents;
+  window._scanParams = scanParams;
+  document.getElementById('scan-min').value = scanParams.minOdds;
+  document.getElementById('scan-max').value = scanParams.maxOdds;
+  document.getElementById('scan-amount').value = scanParams.bonusAmount;
+  const allBooks = extractBooks(scanEvents);
+  const books = myBooksSet.size > 0 ? allBooks.filter(b => myBooksSet.has(b)) : allBooks;
+  chrome.storage.local.get('selectedBooks', d => {
+    const savedSelection = d.selectedBooks ? new Set(d.selectedBooks) : new Set(books);
+    renderBookChips(books, savedSelection);
+    applyFilter();
+  });
+});
+
+// ── Legacy calculator explainers ──────────────────────────────────────────────
 document.getElementById('bonus-explainer').textContent = explanations.bonusBet.body;
 document.getElementById('rf-explainer').textContent = explanations.riskFree.body;
 document.getElementById('dep-explainer').textContent = explanations.depositMatch.body;
 document.getElementById('boost-explainer').textContent = explanations.oddsBoost.body;
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-const fmt = n => `$${Math.abs(n).toFixed(2)}`;
-const pct = n => `${(n * 100).toFixed(1)}%`;
-const fmtAmerican = n => n > 0 ? `+${n}` : `${n}`;
 
 function showResult(id, { good, headline, details = [] }) {
   const el = document.getElementById(id);
@@ -514,7 +915,7 @@ function getNum(inputId, fallback) {
   return Number.isFinite(v) ? v : fallback;
 }
 
-// ── Bonus Bet ─────────────────────────────────────────────────────────────────
+// ── Legacy: Bonus Bet ─────────────────────────────────────────────────────────
 document.getElementById('bonus-calc').addEventListener('click', () => {
   const bonus = getNum('bonus-amount', NaN);
   const backDecimal = getOdds('bonus-back');
@@ -536,7 +937,7 @@ document.getElementById('bonus-calc').addEventListener('click', () => {
   });
 });
 
-// ── Risk-Free ─────────────────────────────────────────────────────────────────
+// ── Legacy: Risk-Free ─────────────────────────────────────────────────────────
 document.getElementById('rf-calc').addEventListener('click', () => {
   const stake = getNum('rf-stake', NaN);
   const decimal = getOdds('rf-odds');
@@ -561,7 +962,7 @@ document.getElementById('rf-calc').addEventListener('click', () => {
   });
 });
 
-// ── Deposit Match ─────────────────────────────────────────────────────────────
+// ── Legacy: Deposit Match ─────────────────────────────────────────────────────
 document.getElementById('dep-calc').addEventListener('click', () => {
   const match = getNum('dep-match', NaN);
   const rolloverMultiplier = getNum('dep-rollover', NaN);
@@ -586,7 +987,7 @@ document.getElementById('dep-calc').addEventListener('click', () => {
   });
 });
 
-// ── Odds Boost ────────────────────────────────────────────────────────────────
+// ── Legacy: Odds Boost ────────────────────────────────────────────────────────
 document.getElementById('boost-calc').addEventListener('click', () => {
   const boostedDecimal = getOdds('boost-boosted');
   const fairDecimal = getOdds('boost-fair');

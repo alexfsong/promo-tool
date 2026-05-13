@@ -431,3 +431,230 @@ select:focus { border-color: var(--blue); }
   color: var(--text);
   background: #1e3a5f;
 }
+
+/* ── Best Play card ──────────────────────────────────────────────────────── */
+
+.bp-fields { display: flex; flex-direction: column; gap: 10px; }
+
+.paste-slip {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 8px 10px;
+}
+.paste-slip summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+  user-select: none;
+  padding: 2px 0;
+}
+.paste-slip summary:hover { color: var(--text); }
+.paste-slip textarea {
+  margin-top: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 8px 10px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  width: 100%;
+  outline: none;
+  resize: vertical;
+}
+.paste-slip textarea:focus { border-color: var(--blue); }
+
+#bp-paste-confirm {
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  font-size: 12px;
+}
+#bp-paste-confirm.hidden { display: none; }
+
+#bp-card.hidden { display: none; }
+
+.bp-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--green);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.bp-card.advanced-headline { border-left-color: #eab308; }
+
+.bp-headline {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.bp-headline-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  font-weight: 600;
+}
+.bp-headline-amount {
+  font-size: 28px;
+  font-weight: 800;
+  color: var(--green);
+  letter-spacing: -0.02em;
+}
+.bp-card.advanced-headline .bp-headline-amount { color: #eab308; }
+
+.bp-leg {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.bp-leg-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  font-weight: 600;
+}
+.bp-leg-event {
+  font-size: 12px;
+  color: var(--muted);
+}
+.bp-leg-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.bp-leg-selection {
+  font-size: 14px;
+  font-weight: 700;
+}
+.bp-leg-odds { font-size: 14px; font-weight: 700; color: #60a5fa; }
+.bp-leg-stake {
+  font-size: 13px;
+  color: var(--text);
+}
+.bp-leg-stake strong { color: var(--green); }
+.bp-leg-book { font-size: 12px; color: var(--muted); }
+
+.bp-details {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.bp-details summary {
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+  user-select: none;
+}
+.bp-details summary:hover { color: var(--text); }
+.bp-details-body {
+  padding: 8px 12px 10px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.bp-empty {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 4px solid #eab308;
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  font-size: 13px;
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.bp-empty-action {
+  font-size: 12px;
+  color: var(--blue);
+  background: transparent;
+  border: 1px solid var(--blue);
+  padding: 4px 10px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  align-self: flex-start;
+}
+.bp-empty-action:hover { background: var(--blue); color: #fff; }
+
+.bp-stage2 {
+  background: var(--bg);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.bp-stage2-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+/* Advanced-only tab visibility (default Beginner hides these tabs). */
+.tab[data-advanced-only="true"] { display: none; }
+body.advanced .tab[data-advanced-only="true"] { display: block; }
+
+/* Legacy calculator container (FR-012: reachable only via Settings). */
+.legacy-calcs {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  z-index: 100;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.legacy-calcs.hidden { display: none; }
+.legacy-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.legacy-header h2 { font-size: 15px; font-weight: 700; }
+
+.link-btn {
+  background: none;
+  border: none;
+  color: var(--blue);
+  text-decoration: underline;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0;
+  text-align: left;
+}
+.link-btn:hover { color: #93c5fd; }
+
+/* EV tab body */
+.ev-content { display: flex; flex-direction: column; gap: 10px; }
+.ev-row {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.ev-row-label { font-size: 13px; color: var(--text); }
+.ev-row-value { font-size: 14px; font-weight: 700; color: #eab308; }

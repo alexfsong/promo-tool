@@ -35,18 +35,66 @@
       <span class="hint">Select every book where you have an account. Hedges will only use these books.</span>
       <div id="my-books-list" class="scan-books-list" style="margin-top:6px;"></div>
     </div>
+
+    <div class="settings-divider"></div>
+
+    <div class="field">
+      <label class="advanced-toggle">
+        <input type="checkbox" id="advancedToggleSettings" />
+        Advanced mode
+      </label>
+      <span class="hint">Shows EV and the scanner. Off by default.</span>
+    </div>
+
+    <div class="settings-divider"></div>
+
+    <div class="field">
+      <button class="link-btn" id="openCalculatorsLink" type="button">Open calculators</button>
+      <span class="hint">Standalone Bonus Bet / Risk-Free / Deposit Match / Odds Boost — the originals.</span>
+    </div>
   </div>
 
   <nav class="tabs" role="tablist">
-    <button class="tab active" data-tab="scanner" role="tab">Scanner</button>
-    <button class="tab" data-tab="bonus" role="tab">Bonus Bet</button>
-    <button class="tab" data-tab="riskfree" role="tab">Risk-Free</button>
-    <button class="tab" data-tab="deposit" role="tab">Deposit</button>
-    <button class="tab" data-tab="boost" role="tab">Boost</button>
+    <button class="tab active" data-tab="bestplay" role="tab">Best Play</button>
+    <button class="tab" data-tab="ev" role="tab" data-advanced-only="true">EV</button>
+    <button class="tab" data-tab="scanner" role="tab" data-advanced-only="true">Scanner</button>
   </nav>
 
-  <!-- Promo Scanner -->
-  <section id="tab-scanner" class="tab-panel active">
+  <!-- Best Play -->
+  <section id="tab-bestplay" class="tab-panel active">
+    <p class="tagline">One card. The exact bet to place, the exact hedge, the exact cash you keep.</p>
+
+    <div class="field">
+      <label for="bp-promo-type">What promo are you converting?</label>
+      <select id="bp-promo-type"></select>
+      <span class="hint" id="bp-promo-blurb"></span>
+    </div>
+
+    <div id="bp-fields" class="bp-fields"></div>
+
+    <details class="paste-slip">
+      <summary>Or paste a bet slip</summary>
+      <textarea id="bp-paste" rows="5" placeholder="Paste the text of a DraftKings or FanDuel bet slip here…"></textarea>
+      <div id="bp-paste-status" class="hint"></div>
+      <div id="bp-paste-confirm" class="hidden"></div>
+    </details>
+
+    <button class="calc-btn" id="bp-go">Find best play</button>
+
+    <div id="bp-status" class="hidden odds-loading"></div>
+    <div id="bp-card" class="hidden"></div>
+  </section>
+
+  <!-- EV (Advanced only) -->
+  <section id="tab-ev" class="tab-panel hidden">
+    <p class="tagline">Expected value across active promos. Advanced view — never the headline number.</p>
+    <div id="ev-content" class="ev-content">
+      <div class="hint">Run a Best Play first. EV per promo type will appear here.</div>
+    </div>
+  </section>
+
+  <!-- Promo Scanner (Advanced only) -->
+  <section id="tab-scanner" class="tab-panel hidden">
     <p class="tagline">Find the best bonus bet conversion opportunities right now.</p>
 
     <div class="scanner-controls">
@@ -88,120 +136,134 @@
     <div id="scan-results" class="scan-results hidden"></div>
   </section>
 
-  <!-- Bonus Bet -->
-  <section id="tab-bonus" class="tab-panel hidden">
-    <p class="tagline">Turn a bonus bet into guaranteed cash.</p>
-
-    <div class="field">
-      <label for="bonus-amount">How much is the bonus bet? ($)</label>
-      <input type="number" id="bonus-amount" placeholder="100" min="0" step="1" />
-    </div>
-    <div class="field">
-      <label for="bonus-back">Odds for the bet you'll place the bonus on</label>
-      <input type="text" id="bonus-back" placeholder="+200 or 3.0" />
-    </div>
-    <div class="field">
-      <label for="bonus-lay">Best available odds on the other side (other book)</label>
-      <input type="text" id="bonus-lay" placeholder="-110 or 1.91" />
+  <!-- Legacy calculators container — hidden by default, opened from Settings -->
+  <section id="legacy-calcs" class="legacy-calcs hidden">
+    <div class="legacy-header">
+      <h2>Calculators</h2>
+      <button class="icon-btn" id="closeLegacyCalcs" title="Close">×</button>
     </div>
 
-    <button class="calc-btn" id="bonus-calc">Calculate</button>
-    <div class="result hidden" id="bonus-result"></div>
+    <nav class="tabs legacy-tabs" role="tablist">
+      <button class="tab active" data-legacy-tab="bonus" role="tab">Bonus Bet</button>
+      <button class="tab" data-legacy-tab="riskfree" role="tab">Risk-Free</button>
+      <button class="tab" data-legacy-tab="deposit" role="tab">Deposit</button>
+      <button class="tab" data-legacy-tab="boost" role="tab">Boost</button>
+    </nav>
 
-    <details class="explainer beginner-only">
-      <summary>How this works</summary>
-      <div class="explainer-body" id="bonus-explainer"></div>
-    </details>
-  </section>
+    <!-- Bonus Bet -->
+    <section id="tab-bonus" class="tab-panel active legacy-panel">
+      <p class="tagline">Turn a bonus bet into guaranteed cash.</p>
 
-  <!-- Risk-Free -->
-  <section id="tab-riskfree" class="tab-panel hidden">
-    <p class="tagline">Find the expected value of a risk-free or second-chance bet.</p>
+      <div class="field">
+        <label for="bonus-amount">How much is the bonus bet? ($)</label>
+        <input type="number" id="bonus-amount" placeholder="100" min="0" step="1" />
+      </div>
+      <div class="field">
+        <label for="bonus-back">Odds for the bet you'll place the bonus on</label>
+        <input type="text" id="bonus-back" placeholder="+200 or 3.0" />
+      </div>
+      <div class="field">
+        <label for="bonus-lay">Best available odds on the other side (other book)</label>
+        <input type="text" id="bonus-lay" placeholder="-110 or 1.91" />
+      </div>
 
-    <div class="field">
-      <label for="rf-stake">How much will you bet? ($)</label>
-      <input type="number" id="rf-stake" placeholder="100" min="0" step="1" />
-    </div>
-    <div class="field">
-      <label for="rf-odds">Odds on the bet</label>
-      <input type="text" id="rf-odds" placeholder="+200 or 3.0" />
-    </div>
-    <div class="field">
-      <label for="rf-refund">How much is refunded if you lose? ($)</label>
-      <input type="number" id="rf-refund" placeholder="Same as stake" min="0" step="1" />
-    </div>
-    <div class="field">
-      <label for="rf-conversion">Bonus bet conversion rate (%)</label>
-      <input type="number" id="rf-conversion" placeholder="70" min="0" max="100" step="1" />
-      <span class="hint">70% is a safe default.</span>
-    </div>
-    <div class="field advanced-only hidden">
-      <label for="rf-winprob">True win probability (%) — leave blank to use implied odds</label>
-      <input type="number" id="rf-winprob" placeholder="Auto" min="0" max="100" step="0.1" />
-    </div>
+      <button class="calc-btn" id="bonus-calc">Calculate</button>
+      <div class="result hidden" id="bonus-result"></div>
 
-    <button class="calc-btn" id="rf-calc">Calculate</button>
-    <div class="result hidden" id="rf-result"></div>
+      <details class="explainer beginner-only">
+        <summary>How this works</summary>
+        <div class="explainer-body" id="bonus-explainer"></div>
+      </details>
+    </section>
 
-    <details class="explainer beginner-only">
-      <summary>How this works</summary>
-      <div class="explainer-body" id="rf-explainer"></div>
-    </details>
-  </section>
+    <!-- Risk-Free -->
+    <section id="tab-riskfree" class="tab-panel hidden legacy-panel">
+      <p class="tagline">Find the expected value of a risk-free or second-chance bet.</p>
 
-  <!-- Deposit Match -->
-  <section id="tab-deposit" class="tab-panel hidden">
-    <p class="tagline">Is a deposit match offer worth taking?</p>
+      <div class="field">
+        <label for="rf-stake">How much will you bet? ($)</label>
+        <input type="number" id="rf-stake" placeholder="100" min="0" step="1" />
+      </div>
+      <div class="field">
+        <label for="rf-odds">Odds on the bet</label>
+        <input type="text" id="rf-odds" placeholder="+200 or 3.0" />
+      </div>
+      <div class="field">
+        <label for="rf-refund">How much is refunded if you lose? ($)</label>
+        <input type="number" id="rf-refund" placeholder="Same as stake" min="0" step="1" />
+      </div>
+      <div class="field">
+        <label for="rf-conversion">Bonus bet conversion rate (%)</label>
+        <input type="number" id="rf-conversion" placeholder="70" min="0" max="100" step="1" />
+        <span class="hint">70% is a safe default.</span>
+      </div>
+      <div class="field advanced-only hidden">
+        <label for="rf-winprob">True win probability (%) — leave blank to use implied odds</label>
+        <input type="number" id="rf-winprob" placeholder="Auto" min="0" max="100" step="0.1" />
+      </div>
 
-    <div class="field">
-      <label for="dep-match">How much is the match? ($)</label>
-      <input type="number" id="dep-match" placeholder="500" min="0" step="1" />
-    </div>
-    <div class="field">
-      <label for="dep-rollover">Rollover requirement (x times the bonus)</label>
-      <input type="number" id="dep-rollover" placeholder="5" min="1" step="1" />
-      <span class="hint">A "5x rollover on $200" means you must wager $1,000 total.</span>
-    </div>
-    <div class="field">
-      <label for="dep-hold">House edge per bet (%)</label>
-      <input type="number" id="dep-hold" placeholder="4.76" min="0" max="50" step="0.01" />
-      <span class="hint">4.76% is standard for -110/-110 markets.</span>
-    </div>
+      <button class="calc-btn" id="rf-calc">Calculate</button>
+      <div class="result hidden" id="rf-result"></div>
 
-    <button class="calc-btn" id="dep-calc">Calculate</button>
-    <div class="result hidden" id="dep-result"></div>
+      <details class="explainer beginner-only">
+        <summary>How this works</summary>
+        <div class="explainer-body" id="rf-explainer"></div>
+      </details>
+    </section>
 
-    <details class="explainer beginner-only">
-      <summary>How this works</summary>
-      <div class="explainer-body" id="dep-explainer"></div>
-    </details>
-  </section>
+    <!-- Deposit Match -->
+    <section id="tab-deposit" class="tab-panel hidden legacy-panel">
+      <p class="tagline">Is a deposit match offer worth taking?</p>
 
-  <!-- Odds Boost -->
-  <section id="tab-boost" class="tab-panel hidden">
-    <p class="tagline">Is this boosted line actually a good deal?</p>
+      <div class="field">
+        <label for="dep-match">How much is the match? ($)</label>
+        <input type="number" id="dep-match" placeholder="500" min="0" step="1" />
+      </div>
+      <div class="field">
+        <label for="dep-rollover">Rollover requirement (x times the bonus)</label>
+        <input type="number" id="dep-rollover" placeholder="5" min="1" step="1" />
+        <span class="hint">A "5x rollover on $200" means you must wager $1,000 total.</span>
+      </div>
+      <div class="field">
+        <label for="dep-hold">House edge per bet (%)</label>
+        <input type="number" id="dep-hold" placeholder="4.76" min="0" max="50" step="0.01" />
+        <span class="hint">4.76% is standard for -110/-110 markets.</span>
+      </div>
 
-    <div class="field">
-      <label for="boost-boosted">Boosted odds offered by the book</label>
-      <input type="text" id="boost-boosted" placeholder="+150 or 2.5" />
-    </div>
-    <div class="field">
-      <label for="boost-fair">Fair odds (from a sharp book like Pinnacle)</label>
-      <input type="text" id="boost-fair" placeholder="+100 or 2.0" />
-      <span class="hint">Not sure? Use Best Odds tab to find current market odds.</span>
-    </div>
-    <div class="field">
-      <label for="boost-stake">How much will you bet? ($)</label>
-      <input type="number" id="boost-stake" placeholder="50" min="0" step="1" />
-    </div>
+      <button class="calc-btn" id="dep-calc">Calculate</button>
+      <div class="result hidden" id="dep-result"></div>
 
-    <button class="calc-btn" id="boost-calc">Calculate</button>
-    <div class="result hidden" id="boost-result"></div>
+      <details class="explainer beginner-only">
+        <summary>How this works</summary>
+        <div class="explainer-body" id="dep-explainer"></div>
+      </details>
+    </section>
 
-    <details class="explainer beginner-only">
-      <summary>How this works</summary>
-      <div class="explainer-body" id="boost-explainer"></div>
-    </details>
+    <!-- Odds Boost -->
+    <section id="tab-boost" class="tab-panel hidden legacy-panel">
+      <p class="tagline">Is this boosted line actually a good deal?</p>
+
+      <div class="field">
+        <label for="boost-boosted">Boosted odds offered by the book</label>
+        <input type="text" id="boost-boosted" placeholder="+150 or 2.5" />
+      </div>
+      <div class="field">
+        <label for="boost-fair">Fair odds (from a sharp book like Pinnacle)</label>
+        <input type="text" id="boost-fair" placeholder="+100 or 2.0" />
+      </div>
+      <div class="field">
+        <label for="boost-stake">How much will you bet? ($)</label>
+        <input type="number" id="boost-stake" placeholder="50" min="0" step="1" />
+      </div>
+
+      <button class="calc-btn" id="boost-calc">Calculate</button>
+      <div class="result hidden" id="boost-result"></div>
+
+      <details class="explainer beginner-only">
+        <summary>How this works</summary>
+        <div class="explainer-body" id="boost-explainer"></div>
+      </details>
+    </section>
   </section>
 
   <script type="module" src="popup.js"></script>
