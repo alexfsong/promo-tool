@@ -1,4 +1,4 @@
-import { fetchForContentScript, getApiKey } from '../src/api/oddsApi.js';
+import { fetchOdds, getApiKey } from '../src/api/provider.js';
 
 // Open the side panel when the toolbar icon is clicked
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
@@ -28,7 +28,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     }
 
     try {
-      const events = await fetchForContentScript(sport, apiKey);
+      const events = await fetchOdds(sport);
       cache.set(sport, { events, fetchedAt: Date.now() });
       sendResponse({ type: 'ODDS_RESPONSE', requestId: msg.requestId,
                      ok: true, events, cachedAt: Date.now() });

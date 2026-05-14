@@ -4,7 +4,15 @@ import { riskFreeEV } from '../src/calc/riskFree.js';
 import { depositMatchEV } from '../src/calc/depositMatch.js';
 import { oddsBoostEV } from '../src/calc/oddsBoost.js';
 import { explanations } from '../src/ui/explanations.js';
-import { fetchOdds, fetchSports, getApiKey, saveApiKey } from '../src/api/provider.js';
+import {
+  fetchOdds,
+  fetchSports,
+  getApiKey,
+  saveApiKey,
+  credentialLabel,
+  credentialPlaceholder,
+  credentialHint,
+} from '../src/api/provider.js';
 import { promoRegistry, getPromoType } from '../src/promos/registry.js';
 import {
   recommendBonusBet,
@@ -66,16 +74,33 @@ document.getElementById('settingsBtn').addEventListener('click', () => {
   settingsPanel.classList.toggle('hidden');
 });
 
+// Provider-driven copy (spec 005 FR-006). The HTML ships with empty
+// placeholders; the active provider fills in the label / placeholder / hint.
+const apiKeyInputEl = document.getElementById('apiKeyInput');
+const apiKeyLabelEl = document.querySelector('label[for="apiKeyInput"]');
+const apiKeyHintEl = document.getElementById('apiKeyHint');
+if (apiKeyLabelEl) apiKeyLabelEl.textContent = credentialLabel;
+if (apiKeyInputEl) apiKeyInputEl.placeholder = credentialPlaceholder;
+if (apiKeyHintEl) apiKeyHintEl.innerHTML = credentialHint;
+
 getApiKey().then(key => {
-  if (key) document.getElementById('apiKeyInput').value = key;
+  if (key) apiKeyInputEl.value = key;
 });
 
 document.getElementById('saveApiKey').addEventListener('click', async () => {
-  const key = document.getElementById('apiKeyInput').value.trim();
-  await saveApiKey(key);
+  const key = apiKeyInputEl.value.trim();
   const saved = document.getElementById('apiKeySaved');
-  saved.classList.remove('hidden');
-  setTimeout(() => saved.classList.add('hidden'), 2000);
+  try {
+    await saveApiKey(key);
+    saved.textContent = 'Saved!';
+    saved.style.color = '#22c55e';
+    saved.classList.remove('hidden');
+    setTimeout(() => saved.classList.add('hidden'), 2000);
+  } catch (err) {
+    saved.textContent = err.message || 'Could not save.';
+    saved.style.color = '#ef4444';
+    saved.classList.remove('hidden');
+  }
 });
 
 // Legacy calculators open/close
@@ -399,7 +424,12 @@ async function fetchAllEvents() {
   try {
     activeSports = await fetchSports();
   } catch (err) {
-    bpStatus.textContent = `Couldn't reach the odds source — check Settings. (${err.message})`;
+    // FR-013: credentials errors surface verbatim. Other errors fall back
+    // to the generic "couldn't reach" copy with the underlying message.
+    const isCredsError = /credentials rejected/i.test(err.message);
+    bpStatus.textContent = isCredsError
+      ? err.message
+      : `Couldn't reach the odds source — check Settings. (${err.message})`;
     bpStatus.className = 'odds-error';
     return null;
   }

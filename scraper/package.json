@@ -1,0 +1,11 @@
+{
+  "name": "promo-tool-scraper",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "run": "node run.js",
+    "dry": "node run.js --dry-run"
+  }
+}

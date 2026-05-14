@@ -21,9 +21,12 @@
   <!-- Settings panel -->
   <div id="settingsPanel" class="settings-panel hidden">
     <div class="field">
-      <label for="apiKeyInput">The Odds API key</label>
-      <input type="text" id="apiKeyInput" placeholder="Paste your API key here" />
-      <span class="hint">Free at <strong>the-odds-api.com</strong> — 500 requests/month.</span>
+      <!-- Label, placeholder, and hint are filled at init time from the active
+           provider's credentialLabel / credentialPlaceholder / credentialHint
+           exports (spec 005 FR-006). Empty defaults are intentional. -->
+      <label for="apiKeyInput"></label>
+      <input type="text" id="apiKeyInput" placeholder="" />
+      <span class="hint" id="apiKeyHint"></span>
     </div>
     <button class="calc-btn" id="saveApiKey">Save</button>
     <div id="apiKeySaved" class="hidden" style="font-size:12px;color:#22c55e;margin-top:4px;">Saved!</div>

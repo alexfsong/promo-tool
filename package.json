@@ -3,6 +3,6 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "test": "node --test test/calc.test.js test/recommend.test.js test/betAndGet.test.js test/betSlip.test.js"
+    "test": "node --test test/calc.test.js test/recommend.test.js test/betAndGet.test.js test/betSlip.test.js test/vpsFeed.test.js"
   }
 }

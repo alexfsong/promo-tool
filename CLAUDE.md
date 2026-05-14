@@ -2,11 +2,11 @@
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan:
 
-- Active plan: `specs/001-best-play-card/plan.md`
-- Active spec: `specs/001-best-play-card/spec.md`
-- Research: `specs/001-best-play-card/research.md`
-- Data model: `specs/001-best-play-card/data-model.md`
-- Quickstart / smoke tests: `specs/001-best-play-card/quickstart.md`
+- Active plan: `specs/005-vps-feed-cutover/plan.md`
+- Active spec: `specs/005-vps-feed-cutover/spec.md`
+- Research: `specs/005-vps-feed-cutover/research.md`
+- Data model: `specs/005-vps-feed-cutover/data-model.md`
+- Quickstart / smoke tests: `specs/005-vps-feed-cutover/quickstart.md`
 
 **Brownfield baseline**: before writing or planning any feature spec,
 read `specs/000-brownfield-context/spec.md`. It is the canonical record

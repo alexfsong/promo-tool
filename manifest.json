@@ -28,5 +28,8 @@
     "128": "assets/icons/icon128.png"
   },
   "permissions": ["storage", "sidePanel"],
-  "host_permissions": ["https://api.the-odds-api.com/*"]
+  "host_permissions": [
+    "https://*.195-201-99-206.sslip.io/*",
+    "https://api.the-odds-api.com/*"
+  ]
 }

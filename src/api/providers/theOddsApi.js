@@ -5,6 +5,13 @@ const BASE = 'https://api.the-odds-api.com/v4';
 
 export const name = 'the-odds-api';
 
+// Settings-UI copy. Read by src/api/provider.js and rendered into the
+// credentials field at popup init time (spec 005 FR-006).
+export const credentialLabel = 'The Odds API key';
+export const credentialPlaceholder = 'Paste your API key here';
+export const credentialHint =
+  'Free at the-odds-api.com — 500 requests/month.';
+
 async function apiFetch(path, apiKey, params = {}) {
   const url = new URL(`${BASE}${path}`);
   url.searchParams.set('apiKey', apiKey);

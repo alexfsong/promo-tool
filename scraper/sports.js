@@ -1,0 +1,79 @@
+// Curated sport registry. Keys match The-Odds-API so the existing client doesn't
+// need remapping. Per-source IDs/paths point at each provider's identifier.
+//
+// Pinnacle league IDs are stable for in-season leagues but verify if a sport
+// disappears: GET https://guest.api.arcadia.pinnacle.com/0.1/sports/{sportId}/leagues
+//
+// Action Network paths are the slug used in their public scoreboard endpoint.
+
+export const SPORTS = [
+  {
+    key: 'americanfootball_nfl',
+    title: 'NFL',
+    group: 'American Football',
+    pinnacle: { sportId: 29, leagueIds: [889] },
+    actionNetwork: { path: 'nfl' },
+  },
+  {
+    key: 'basketball_nba',
+    title: 'NBA',
+    group: 'Basketball',
+    pinnacle: { sportId: 4, leagueIds: [487] },
+    actionNetwork: { path: 'nba' },
+  },
+  {
+    key: 'baseball_mlb',
+    title: 'MLB',
+    group: 'Baseball',
+    pinnacle: { sportId: 9, leagueIds: [246] },
+    actionNetwork: { path: 'mlb' },
+  },
+  {
+    key: 'icehockey_nhl',
+    title: 'NHL',
+    group: 'Ice Hockey',
+    pinnacle: { sportId: 19, leagueIds: [1456] },
+    actionNetwork: { path: 'nhl' },
+  },
+  // Spec 005 FR-009 — extended coverage for the friend cohort. League IDs are
+  // verified per research.md R5 at deploy time; rotate if Pinnacle reorganizes.
+  // Action Network slugs are best-effort: if missing, Pinnacle covers alone.
+  {
+    key: 'soccer_epl',
+    title: 'English Premier League',
+    group: 'Soccer',
+    pinnacle: { sportId: 29, leagueIds: [1980] },
+    actionNetwork: { path: 'soccer/epl' },
+  },
+  {
+    key: 'soccer_uefa_champs_league',
+    title: 'UEFA Champions League',
+    group: 'Soccer',
+    pinnacle: { sportId: 29, leagueIds: [2627] },
+    actionNetwork: { path: 'soccer/uefa-champions-league' },
+  },
+  {
+    key: 'tennis_atp_wta',
+    title: 'ATP + WTA',
+    group: 'Tennis',
+    pinnacle: { sportId: 33, leagueIds: [2272, 2273] },
+    actionNetwork: { path: 'tennis' },
+  },
+  {
+    key: 'mma_mixed_martial_arts',
+    title: 'MMA (UFC)',
+    group: 'MMA',
+    pinnacle: { sportId: 22, leagueIds: [1582] },
+    actionNetwork: { path: 'mma' },
+  },
+];
+
+// Public shape returned by /sports.json (matches The-Odds-API).
+export function asSportsManifest() {
+  return SPORTS.map(s => ({
+    key: s.key,
+    title: s.title,
+    group: s.group,
+    active: true,
+  }));
+}

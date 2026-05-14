@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(claudit recall *)",
+      "Bash(npm test *)",
+      "Bash(node --check src/api/provider.js)",
+      "Bash(node --check src/api/providers/theOddsApi.js)",
+      "Bash(node --check popup/popup.js)",
+      "Bash(node --check background/serviceWorker.js)",
+      "Bash(OUT_DIR=/tmp/promo-feed-smoke node run.js --dry-run)",
+      "Bash(OUT_DIR=/tmp/promo-feed-smoke node /Users/alexandersong/Documents/claude-projects/promo-tool/scraper/run.js --dry-run)",
+      "Read(//tmp/**)",
+      "Bash(curl -s -H 'X-API-Key: CmX2KcMrXuFmNg6YFbmTxE0y9CIrOi0R' -H 'Accept: application/json' -H 'Referer: https://www.pinnacle.com/' 'https://guest.api.arcadia.pinnacle.com/0.1/leagues/487/matchups')",
+      "Bash(curl *)",
+      "Bash(node -e 'const d=JSON.parse\\(require\\(\"fs\"\\).readFileSync\\(0,\"utf8\"\\)\\); console.log\\(\"count:\",d.length\\); const sample=d[0]; console.log\\(\"keys:\",Object.keys\\(sample\\)\\); console.log\\(\"parent:\",sample.parent\\); console.log\\(\"type:\",sample.type\\); console.log\\(\"participants len:\",sample.participants?.length\\); console.log\\(\"first participant:\",sample.participants?.[0]\\);')",
+      "Bash(node -e ' *)",
+      "Bash(OUT_DIR=/tmp/promo-feed-smoke node /Users/alexandersong/Documents/claude-projects/promo-tool/scraper/run.js)",
+      "Bash(python3 -m json.tool)",
+      "Bash(python3 *)",
+      "Bash(node *)",
+      "Skill(schedule)",
+      "Bash(gh extension *)",
+      "Bash(specify --help)",
+      "Bash(specify init *)",
+      "Bash(claudit add *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(SPECIFY_FEATURE=001-best-play-card .specify/scripts/bash/setup-plan.sh *)",
+      "Bash(.specify/scripts/bash/setup-plan.sh *)",
+      "Bash(.specify/scripts/bash/setup-tasks.sh *)",
+      "Bash(git commit *)"
+    ]
+  }
+}
