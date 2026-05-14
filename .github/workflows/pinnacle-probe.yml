@@ -1,0 +1,43 @@
+name: pinnacle-probe
+
+# One-off probe: does Pinnacle's Cloudflare WAF let GitHub Actions runners
+# (Azure IP ranges) through? If yes, we can host the scraper here. If no,
+# fall back to laptop rsync.
+#
+# Run manually via the Actions tab.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Runner IP
+        run: curl -s https://api.ipify.org && echo
+
+      - name: Pinnacle matchups (NFL league 889)
+        run: |
+          curl -sS -o /tmp/pin.out -w 'HTTP %{http_code}  size=%{size_download}\n' \
+            -H 'X-API-Key: CmX2KcMrXuFmNg6YFbmTxE0y9CIrOi0R' \
+            -H 'Referer: https://www.pinnacle.com/' \
+            -H 'Accept: application/json' \
+            'https://guest.api.arcadia.pinnacle.com/0.1/leagues/889/matchups'
+          echo '--- first 400 bytes ---'
+          head -c 400 /tmp/pin.out; echo
+
+      - name: Pinnacle markets (NBA league 487)
+        run: |
+          curl -sS -o /tmp/pin2.out -w 'HTTP %{http_code}  size=%{size_download}\n' \
+            -H 'X-API-Key: CmX2KcMrXuFmNg6YFbmTxE0y9CIrOi0R' \
+            -H 'Referer: https://www.pinnacle.com/' \
+            -H 'Accept: application/json' \
+            'https://guest.api.arcadia.pinnacle.com/0.1/leagues/487/markets/straight'
+          echo '--- first 400 bytes ---'
+          head -c 400 /tmp/pin2.out; echo
+
+      - name: Action Network (sanity check)
+        run: |
+          curl -sS -o /tmp/an.out -w 'HTTP %{http_code}  size=%{size_download}\n' \
+            -A 'Mozilla/5.0' \
+            'https://api.actionnetwork.com/web/v1/scoreboard/nfl?bookIds=15,30&date=20260513&periods=event'
