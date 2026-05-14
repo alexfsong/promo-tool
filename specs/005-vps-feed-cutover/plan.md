@@ -5,9 +5,9 @@
 
 ## Summary
 
-Cut over the extension's default odds provider from `theOddsApi` (free-tier rate-limited) to `vpsFeed` (a static JSON feed produced by `scraper/run.js` running on the maintainer's existing VPS at `195.201.99.206`, served over HTTPS behind caddy `basic_auth` at `promo-tool.195-201-99-206.sslip.io`). The scraper, the `vpsFeed.js` provider, and the `mergeEvents` normalizer already exist. Remaining work is operational (add the caddy site block, install cron, provision per-friend credentials), client-side (one-line provider swap, URL normalization with embedded credentials + Basic Auth header, copy relabel, manifest `host_permissions` change), and small scraper extensions (more sports in `sports.js`).
+Cut over the extension's default odds provider from `theOddsApi` (free-tier rate-limited) to `vpsFeed` (a static JSON feed produced by `scraper/run.js`, served from the maintainer's existing VPS at `195.201.99.206` over HTTPS behind caddy `basic_auth` at `promo-tool.195-201-99-206.sslip.io`). The scraper, the `vpsFeed.js` provider, and the `mergeEvents` normalizer already exist. Remaining work is operational (add the caddy site block, provision per-friend credentials, mint an SSH deploy key, write the scheduled GitHub Actions workflow that runs the scraper and rsyncs to the VPS), client-side (one-line provider swap, URL normalization with embedded credentials + Basic Auth header, copy relabel, manifest `host_permissions` change), and small scraper extensions (more sports in `sports.js`).
 
-Technical approach: keep the existing provider-abstraction interface (`name`, `fetchSports`, `fetchOdds`, `getApiKey`, `saveApiKey`) intact — Constitution §II — and add a per-provider `credentialLabel` field consumed by the Settings copy block. Add an `Authorization` header injection inside `vpsFeed.js` by parsing userinfo out of the stored URL (modern `fetch()` strips embedded credentials). Auto-prefix `https://` and trim/strip on save. Expand `scraper/sports.js` with EPL, UCL, ATP+WTA, UFC league IDs. Ship an ops doc (`scraper/DEPLOY.md`) covering the new caddy site block, per-friend bcrypt hashes (via `caddy hash-password`), and the cron entry that already lives in `scraper/README.md`. No new runtime dependencies on either side; caddy auto-renews TLS so no certbot.
+Technical approach: keep the existing provider-abstraction interface (`name`, `fetchSports`, `fetchOdds`, `getApiKey`, `saveApiKey`) intact — Constitution §II — and add a per-provider `credentialLabel` field consumed by the Settings copy block. Add an `Authorization` header injection inside `vpsFeed.js` by parsing userinfo out of the stored URL (modern `fetch()` strips embedded credentials). Auto-prefix `https://` and trim/strip on save. Expand `scraper/sports.js` with EPL, UCL, ATP+WTA, UFC league IDs. Ship an ops doc (`scraper/deploy.md`) covering the caddy site block, per-friend bcrypt hashes (via `caddy hash-password`), the restricted SSH deploy key on the VPS, and the GitHub Actions workflow file. The scraper itself does NOT run on the VPS — Pinnacle's Cloudflare WAF blocks the Hetzner DC range (probe `25836475374`); GitHub-hosted Azure runners pass it (research.md R9). No new runtime dependencies on either side; caddy auto-renews TLS so no certbot.
 
 ## Technical Context
 
@@ -15,9 +15,9 @@ Technical approach: keep the existing provider-abstraction interface (`name`, `f
 **Primary Dependencies**: none (zero npm runtime deps — Constitution §III). caddy on the VPS (already installed); not a code dependency.
 **Storage**: `chrome.storage.local` only (Constitution §V); reuses existing `oddsApiKey` slot per FR-002 — no new keys.
 **Testing**: `node --test` for any new pure logic (URL parser); manual smoke tests for the deploy.
-**Target Platform**: Chromium-based browsers with MV3 side panel (client); the maintainer's existing VPS at `195.201.99.206` running Node 20+ and caddy (ops).
-**Project Type**: Chrome MV3 browser extension (client) + standalone Node scraper (ops, already in `scraper/`).
-**Performance Goals**: feed P95 freshness ≤ 12 min (SC-002); per-request latency ≤ 500 ms over residential broadband to a North America VPS; scraper run completes inside 10-min cron window (currently ~3 s per sport).
+**Target Platform**: Chromium-based browsers with MV3 side panel (client); GitHub-hosted ubuntu-latest runner (scraper compute); the maintainer's existing VPS at `195.201.99.206` running caddy (static feed host).
+**Project Type**: Chrome MV3 browser extension (client) + standalone Node scraper (already in `scraper/`, now executed by GitHub Actions) + caddy static host on the VPS.
+**Performance Goals**: feed P95 freshness ≤ 20 min (SC-002, includes GH Actions cron drift); per-request latency ≤ 500 ms over residential broadband to the VPS; scraper run + rsync completes inside 90 s wall clock per workflow run.
 **Constraints**: no build step, no bundler, zero new npm runtime deps; manifest `host_permissions` swap only (Constitution Technical Constraints §"Permissions stay minimal" — host_permissions expansions are allowed when a new provider's base URL ships, which is exactly this case); Basic Auth credentials only over HTTPS (FR-011 + FR-013); credentials never logged.
 **Scale/Scope**: ≤10 cohort friends; ≤8 sports in `sports.js`; ≤200 events per sport per scan; feed payloads sub-MB per sport.
 
@@ -77,8 +77,12 @@ scraper/
 ├── sources/
 │   ├── pinnacle.js                 # unchanged (already handles per-leagueId lookup)
 │   └── actionNetwork.js            # unchanged (path slug per sport)
-├── DEPLOY.md                       # NEW: caddy site block + basic_auth + cron walk-through
-└── README.md                       # CHANGE: link to DEPLOY.md; clarify Basic Auth requirement
+├── deploy.md                       # CHANGE: caddy site block + basic_auth + GH Actions deploy-key walk-through (cron section deleted)
+└── README.md                       # CHANGE: link to deploy.md; clarify scraper now runs on GH Actions, not VPS cron
+.github/
+└── workflows/
+    ├── pinnacle-probe.yml          # already exists: one-off Cloudflare WAF probe (kept for re-verification on host moves)
+    └── scraper.yml                 # NEW: schedule */10 * * * * + workflow_dispatch; runs node run.js then rsync to VPS
 test/
 ├── calc.test.js                    # unchanged
 ├── recommend.test.js               # unchanged

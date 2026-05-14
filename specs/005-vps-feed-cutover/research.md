@@ -4,18 +4,23 @@ Phase 0 of `/speckit-plan`. Resolves the open questions left after `/speckit-cla
 
 ---
 
-## R1 — VPS host pick
+## R1 — Host split: static feed vs. scraper compute
 
-**Decision**: **Reuse the existing maintainer-operated VPS at `195.201.99.206`** (Hetzner-class, Ubuntu). Already running caddy alongside `lisearch.195-201-99-206.sslip.io` and `portfolio.195-201-99-206.sslip.io`. Adding the promo-tool feed is a third caddy site on the same box.
+**Decision (revised 2026-05-13 after R9)**: split the workload across two hosts.
 
-**Subdomain**: `promo-tool.195-201-99-206.sslip.io`. [sslip.io](https://sslip.io) wildcard-resolves any `*.195-201-99-206.sslip.io` to that IP, so no DNS work is needed.
+- **Static feed host**: existing maintainer VPS at `195.201.99.206` (Hetzner-class, Ubuntu). Already runs caddy alongside `lisearch.195-201-99-206.sslip.io` and `portfolio.195-201-99-206.sslip.io`. Adds the third site `promo-tool.195-201-99-206.sslip.io`. Serves the JSON files written into `/var/www/promo-tool/`. No scraper runs here.
+- **Scraper compute**: GitHub Actions cron in this repo (see R9). The workflow runs `node scraper/run.js` on a hosted Azure runner, then rsyncs the output directory to the VPS over SSH.
 
-**Rationale**: zero marginal infra cost (better than SC-004's ≤$5/mo). Same operator already manages the host. caddy is already proven there; no provisioning step.
+**Subdomain**: `promo-tool.195-201-99-206.sslip.io`. [sslip.io](https://sslip.io) wildcard-resolves any `*.195-201-99-206.sslip.io` to that IP — no DNS work needed.
+
+**Rationale**: zero marginal infra cost. The VPS already pays for itself. GitHub Actions is free for public repos. Splitting the workload is what unblocks R9 (the Hetzner IP is hard-blocked by Pinnacle's Cloudflare WAF; the VPS cannot scrape its own data).
 
 **Alternatives considered**:
-- **Provision a fresh Hetzner CX22 (~€4.20/mo)**: rejected — duplicates work, costs $4/mo more than reusing the existing host.
-- **Custom domain in front of sslip**: a real maintainer-owned domain could be pointed at this IP, but sslip.io suffices for the friend cohort and removes annual-renewal ops drift. Punt to a follow-up if the cohort grows.
-- **Fly.io free tier / GitHub Actions Pages**: rejected during the first pass (cron timing / Basic Auth gaps).
+- **Scraper on the VPS (original R1)**: blocked by Pinnacle's Cloudflare 403 on Hetzner DC ranges — see R9 probe.
+- **Provision a fresh VPS for the scraper**: most DC ranges are similarly blocked. Costs >$0 and likely just shifts the problem.
+- **Residential proxy in front of Pinnacle requests**: keeps the scraper on the VPS but costs $2–10/mo and adds a dependency. Rejected when R9 confirmed GH Actions runners pass the WAF for free.
+- **Run scraper on the maintainer's laptop with rsync to VPS**: works but couples the feed to laptop uptime. Inferior to GH Actions for the friend cohort.
+- **Custom domain in front of sslip**: still punt — sslip suffices.
 
 ---
 
@@ -186,17 +191,54 @@ The maintainer swaps by uncommenting the import and the const line, re-running t
 
 ---
 
+## R9 — Scraper host: GitHub Actions (not the VPS)
+
+**Decision**: run `scraper/run.js` from a scheduled GitHub Actions workflow in this repo, not from cron on the VPS. The workflow rsyncs `/var/www/promo-tool/` contents to the VPS over SSH at the end of each run.
+
+**Evidence (probe run `25836475374`, 2026-05-13)**:
+
+- VPS at 195.201.99.206 → `GET https://guest.api.arcadia.pinnacle.com/0.1/leagues/889/matchups` returns **HTTP 403** with a Cloudflare interstitial (`cf-ray: …-FRA`, `server: cloudflare`). The Hetzner DC range is hard-blocked.
+- Same request from a GitHub-hosted ubuntu-latest runner → **HTTP 200**, real JSON body (NBA league 487 matchups + markets observed).
+- Action Network endpoint succeeds from both hosts (200/200); only Pinnacle is gated. Workflow file: `.github/workflows/pinnacle-probe.yml`.
+
+**Architecture**:
+
+```
+                                                        rsync over SSH
+  GitHub Actions cron (Azure)  ─── node scraper/run.js ─────────────────►  VPS /var/www/promo-tool/
+        every */10 min                                                      caddy file_server + basic_auth
+                                                                            │
+                                                                            ▼
+                                                                       friend extension fetch
+```
+
+- **Schedule**: `cron: '*/10 * * * *'` in the workflow YAML. GitHub's scheduled-workflow scheduler is best-effort; in practice fires within 5–15 minutes of the slot, occasionally delayed under load. SC-002 is relaxed accordingly (see spec).
+- **Compute**: ubuntu-latest hosted runner. Node 20+ is preinstalled.
+- **Push**: `rsync -az --delete /tmp/promo-out/ deploy@195.201.99.206:/var/www/promo-tool/`. SSH key minted specifically for this purpose; private key stored as a GitHub repo secret; public key in `~deploy/.ssh/authorized_keys` on the VPS with a `command=` restriction to rsync inside `/var/www/promo-tool` only.
+- **Cost**: $0 for public repos (unlimited Actions minutes). Private repos: ~144 runs/day × ~45 s ≈ 100 min/day ≈ 3,000 min/mo — over the 2,000-min free tier. If this repo is private, either make it public, bump the cron to `*/15`, or accept the ~$8/mo overage. Recommendation: **public repo** (scraper has no secrets in source; SSH private key lives in repo secrets, not the tree).
+
+**Rationale**: free, no laptop-uptime dependency, no proxy bill, Azure egress passes the WAF that Hetzner egress fails. The cost is GitHub's looser cron timing — acceptable for a 10-minute-grain feed.
+
+**Alternatives considered**:
+- **Scraper-on-VPS with residential proxy for Pinnacle requests**: $2–10/mo, adds a third-party dependency to the data path. Rejected when free path exists.
+- **Run the scraper on the maintainer's laptop, rsync to VPS**: works, $0, but couples the friend cohort's feed freshness to laptop uptime. Rejected as fragile.
+- **Move to a different cloud (DigitalOcean, Vultr, Linode)**: most major DC ranges share the same Cloudflare reputation list. Gamble; rejected without a probe.
+- **Drop Pinnacle**: it's the sharp benchmark for EV+. Not negotiable.
+
+---
+
 ## Decisions summary
 
 | ID | Decision | Owns |
 |---|---|---|
-| R1 | Reuse existing VPS 195.201.99.206; subdomain promo-tool.195-201-99-206.sslip.io | `scraper/DEPLOY.md` |
-| R2 | caddy `basic_auth` + 60s Cache-Control (revised from nginx) | `scraper/DEPLOY.md` |
+| R1 | Static-feed host = existing VPS 195.201.99.206; scraper host = GitHub Actions (see R9). Subdomain `promo-tool.195-201-99-206.sslip.io` | `scraper/deploy.md` |
+| R2 | caddy `basic_auth` + 60s Cache-Control (revised from nginx) | `scraper/deploy.md` |
 | R3 | Per-provider `credentialLabel`/`Placeholder`/`Hint` exports | `src/api/providers/*.js` + `popup/popup.js` |
 | R4 | Pure `normalizeFeedUrl()` w/ embedded-creds extraction | `src/api/providers/vpsFeed.js` + `test/vpsFeed.test.js` |
 | R5 | Add EPL, UCL, ATP+WTA, MMA; 2-outcome filter for soccer | `scraper/sports.js` + `scraper/normalize.js` (no change — filter is at scanner) |
-| R6 | caddy auto-HTTPS (revised from certbot) | `scraper/DEPLOY.md` |
+| R6 | caddy auto-HTTPS (revised from certbot) | `scraper/deploy.md` |
 | R7 | Comment-toggle import + const in `provider.js` | `src/api/provider.js` |
 | R8 | host_permissions: `*.195-201-99-206.sslip.io` + `api.the-odds-api.com` | `manifest.json` |
+| R9 | Scraper runs on GitHub Actions; rsyncs to VPS over restricted SSH key | `.github/workflows/scraper.yml` + `scraper/deploy.md` |
 
 All NEEDS CLARIFICATION items from `plan.md` Technical Context are resolved.

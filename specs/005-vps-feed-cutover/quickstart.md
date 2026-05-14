@@ -9,49 +9,52 @@ Manual smoke + ops checklist that exercises the full cutover. Run after `/specki
   `portfolio.195-201-99-206.sslip.io`), per research.md R1.
 - sslip.io wildcard-resolves `promo-tool.195-201-99-206.sslip.io` to the
   host IP automatically — no DNS configuration needed.
-- `caddy` v2+ and `node` ≥ 20 installed on the VPS (verify with `caddy
-  version` and `node --version`).
-- This repo cloned to `/opt/promo-tool` on the VPS.
+- `caddy` v2+ and `rsync` (+ `rrsync` wrapper) installed on the VPS.
+  Node is NOT required on the VPS — the scraper runs on GitHub Actions
+  per research.md R9.
+- This repo on GitHub with three Actions secrets configured:
+  `VPS_DEPLOY_KEY`, `VPS_KNOWN_HOSTS`, `VPS_DEPLOY_USER`.
+- `gh` CLI authenticated locally (`gh auth status`).
 
-## Ops smoke A — Scraper runs on the VPS
+## Ops smoke A — Scraper runs on GitHub Actions and rsyncs to VPS
 
-**Goal**: covers US2 and FR-007.
+**Goal**: covers US2, FR-007, FR-014.
 
 ```bash
-# 1. Dry-run from /opt/promo-tool/scraper — should print one sample event per sport.
-cd /opt/promo-tool/scraper
-node run.js --dry-run
+# 1. Trigger the workflow manually.
+gh workflow run scraper.yml
+gh run watch                              # follow until completion
 
-# 2. First real run, writes JSON to /var/www/promo-tool.
-sudo mkdir -p /var/www/promo-tool
-sudo chown $USER:$USER /var/www/promo-tool
-OUT_DIR=/var/www/promo-tool node run.js
+# 2. From the VPS, verify files landed under /var/www/promo-tool.
+ssh deploy@195.201.99.206 'ls -la /var/www/promo-tool/sports.json /var/www/promo-tool/odds/'
+# Expect: files owned deploy:caddy, mtime within the last minute.
 
-# 3. Verify files.
-ls -la /var/www/promo-tool/sports.json /var/www/promo-tool/odds/
-cat /var/www/promo-tool/sports.json | jq '.[].key'
+# 3. From any client, fetch through caddy.
+curl -u maintainer:<pw> https://promo-tool.195-201-99-206.sslip.io/sports.json | jq '.[].key'
 ```
 
-**Pass criteria**: `sports.json` contains the eight expected keys (NFL, NBA, MLB, NHL, EPL, UCL, ATP+WTA, MMA — per R5). Each `odds/<key>.json` is a JSON array; non-empty during in-season for that sport.
+**Pass criteria**: Actions run completes green in ≤ 90 s. `sports.json` contains the eight expected keys (NFL, NBA, MLB, NHL, EPL, UCL, ATP+WTA, MMA — per R5). Each `odds/<key>.json` is a JSON array; non-empty during in-season for that sport.
 
-## Ops smoke B — Cron firing every 10 minutes
+## Ops smoke B — Scheduled workflow firing every 10 minutes
 
 **Goal**: covers SC-002 + SC-005.
 
 ```bash
-# Install cron entry.
-crontab -e
-# Append:
-# */10 * * * * cd /opt/promo-tool/scraper && OUT_DIR=/var/www/promo-tool node run.js >> /var/log/promo-scraper.log 2>&1
+# 1. Confirm the workflow is on the schedule.
+gh workflow list                          # scraper.yml should appear, status "active"
 
-sudo touch /var/log/promo-scraper.log && sudo chown $USER:$USER /var/log/promo-scraper.log
+# 2. Wait 15 minutes after committing the workflow file.
+#    GitHub's scheduler is best-effort; drift up to ~10 min is normal.
 
-# Wait 11 minutes, then:
-tail -20 /var/log/promo-scraper.log
-stat -c '%y %n' /var/www/promo-tool/sports.json /var/www/promo-tool/odds/*.json
+# 3. List recent runs.
+gh run list -w scraper.yml --limit 5
+# Expect: at least one "scheduled" run completed in the last 15 min.
+
+# 4. Spot-check freshness from the VPS.
+ssh deploy@195.201.99.206 'stat -c "%y %n" /var/www/promo-tool/sports.json /var/www/promo-tool/odds/*.json'
 ```
 
-**Pass criteria**: `mtime` on `sports.json` and on each `odds/*.json` is within the last 11 minutes. `promo-scraper.log` shows one "done in Xs" line per cron fire, ≤3 source-error lines per run (transient 5xx tolerated).
+**Pass criteria**: `mtime` on `sports.json` and on each `odds/*.json` is within the last 15 minutes. Actions tab shows green "scheduled" run badges; ≤1 missed slot out of any 6 consecutive expected fires (SC-005 95% threshold).
 
 ## Ops smoke C — caddy Basic Auth + HTTPS
 
@@ -201,11 +204,12 @@ Run the seven smoke tests in `specs/001-best-play-card/quickstart.md` against th
 
 ## Definition of done for spec 005
 
-- All ops smokes A–D pass on the production VPS.
+- All ops smokes A–D pass on the production VPS + GitHub Actions.
 - All client smokes E–I pass against the production feed.
 - Spec 001 regression check passes.
 - `node --test test/vpsFeed.test.js` passes (FR-002 URL normalize + credential extract).
 - `manifest.json` `host_permissions` includes `https://*.195-201-99-206.sslip.io/*`.
-- `scraper/DEPLOY.md` exists and is current.
+- `.github/workflows/scraper.yml` is committed and the workflow is enabled in the Actions tab.
+- `scraper/deploy.md` exists and reflects the GH Actions architecture (R9).
 - At least one real friend (not the maintainer) has run smoke F end-to-end in under 90 seconds.
-- One 24-hour soak: cron log shows ≥99% successful runs (SC-005); P95 feed `last_update` age ≤ 12 min (SC-002).
+- One 24-hour soak: `gh run list -w scraper.yml` shows ≥95% successful runs (SC-005); P95 feed `last_update` age ≤ 20 min (SC-002).

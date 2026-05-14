@@ -23,7 +23,8 @@ Single repo, dual deliverable per plan.md §"Structure Decision":
 - Tests: `test/` (`node --test`)
 - Scraper source: `scraper/`
 - Spec docs: `specs/005-vps-feed-cutover/`
-- Ops paths on VPS: `/opt/promo-tool/`, `/var/www/promo-tool/`, `/etc/caddy/Caddyfile`, `/var/log/promo-scraper.log`
+- Workflow files: `.github/workflows/`
+- Ops paths on VPS: `/var/www/promo-tool/`, `/etc/caddy/Caddyfile`, `~deploy/.ssh/authorized_keys`
 
 ---
 
@@ -79,26 +80,36 @@ Single repo, dual deliverable per plan.md §"Structure Decision":
 
 ---
 
-## Phase 4: User Story 2 — Scraper runs unattended on a VPS (Priority: P1)
+## Phase 4: User Story 2 — Scraper runs unattended on GitHub Actions (Priority: P1)
 
-**Goal**: cron fires every 10 minutes on the VPS, writes static JSON behind caddy HTTPS + Basic Auth.
+**Goal**: scheduled workflow fires every 10 minutes on a GitHub-hosted runner, rsyncs static JSON to `/var/www/promo-tool/` on the VPS behind caddy HTTPS + Basic Auth.
 
-**Independent Test**: from a separate machine, `curl https://promo-tool.195-201-99-206.sslip.io/sports.json` returns 401 without creds and 200 with creds. Cron log shows runs within the last 11 minutes. Smokes A–D in `quickstart.md`.
+**Independent Test**: from a separate machine, `curl https://promo-tool.195-201-99-206.sslip.io/sports.json` returns 401 without creds and 200 with creds. The Actions tab (or `gh run list -w scraper.yml`) shows runs within the last 15 minutes. Smokes A–D in `quickstart.md`.
 
-**Note**: this phase is run-on-VPS work that can proceed in parallel with Phase 3's client work.
+**Note**: this phase is split between VPS ops (T019–T026) and GH Actions ops (T027a–T028). Can proceed in parallel with Phase 3's client work.
 
-- [ ] T019 [US2] Verify the existing VPS at `195.201.99.206` per research.md R1 — confirm caddy is running (`systemctl status caddy`) and `node --version` ≥ 20. No new provisioning needed; the host already serves `lisearch.195-201-99-206.sslip.io` and `portfolio.195-201-99-206.sslip.io`.
+### VPS preparation (static host only — no scraper here)
+
+- [ ] T019 [US2] Verify the existing VPS at `195.201.99.206` per research.md R1 — confirm caddy is running (`systemctl status caddy`) and `rsync --version` is present (preinstalled on Ubuntu). Node is NOT required on the VPS — the scraper runs on GitHub-hosted runners.
 - [ ] T020 [US2] (skipped — sslip.io wildcard-resolves `promo-tool.195-201-99-206.sslip.io` to the host IP automatically; no DNS config required).
-- [ ] T021 [US2] If Node ≥ 20 is not already on the VPS, install it: `curl -fsSL https://deb.nodesource.com/setup_20.x | sudo bash - && sudo apt install -y nodejs`. (caddy and any other deps are already present.)
-- [ ] T022 [US2] Clone the repo to `/opt/promo-tool` on the VPS: `git clone <repo> /opt/promo-tool`. Run a dry-run from the VPS to confirm Pinnacle + Action Network are reachable from the host's IP: `cd /opt/promo-tool/scraper && node run.js --dry-run`.
-- [ ] T023 [US2] Create the output directory readable by the `caddy` user: `sudo mkdir -p /var/www/promo-tool && sudo chown -R $USER:caddy /var/www/promo-tool && sudo chmod -R 750 /var/www/promo-tool`. Run the scraper once for real: `OUT_DIR=/var/www/promo-tool node /opt/promo-tool/scraper/run.js`. Verify `/var/www/promo-tool/sports.json` and `/var/www/promo-tool/odds/*.json` exist.
+- [ ] T021 [US2] (skipped — Node is no longer required on the VPS per R9; scraper runs on GitHub Actions.)
+- [ ] T022 [US2] Create a `deploy` user on the VPS (or pick an existing low-priv account) that will own `/var/www/promo-tool/`. `sudo useradd -m -s /bin/bash deploy && sudo usermod -aG caddy deploy`. Locate `rrsync` (`dpkg -L rsync | grep rrsync` — usually `/usr/share/doc/rsync/scripts/rrsync`; copy to `/usr/local/bin/rrsync` and `chmod +x` so it lives on `$PATH`).
+- [ ] T023 [US2] Create the output directory readable by caddy and writable by `deploy`: `sudo mkdir -p /var/www/promo-tool/odds && sudo chown -R deploy:caddy /var/www/promo-tool && sudo chmod -R 750 /var/www/promo-tool`.
 - [ ] T024 [US2] (skipped — caddy auto-provisions Let's Encrypt TLS on first request per research.md R6; no certbot needed).
-- [ ] T025 [US2] Append the `promo-tool.195-201-99-206.sslip.io` site block to `/etc/caddy/Caddyfile` per scraper/DEPLOY.md (`root * /var/www/promo-tool`, `file_server`, `basic_auth { ... }`, JSON content-type + Cache-Control header matchers). Run `sudo caddy validate --config /etc/caddy/Caddyfile && sudo systemctl reload caddy`.
-- [ ] T026 [US2] Generate the maintainer's bcrypt hash with `caddy hash-password --plaintext '<password>'`, paste it into the `basic_auth` block inside the new site stanza in `/etc/caddy/Caddyfile`, `sudo systemctl reload caddy`. Verify from a separate machine: `curl -u maintainer:<pw> https://promo-tool.195-201-99-206.sslip.io/sports.json` returns 200; without `-u` returns 401.
-- [ ] T027 [US2] Install the cron entry per research.md R1 + `scraper/README.md`: `*/10 * * * * cd /opt/promo-tool/scraper && OUT_DIR=/var/www/promo-tool node run.js >> /var/log/promo-scraper.log 2>&1`. Create the log file with maintainer ownership: `sudo touch /var/log/promo-scraper.log && sudo chown $USER:$USER /var/log/promo-scraper.log`.
-- [ ] T028 [US2] Wait 11 minutes; run quickstart.md Smoke B. Verify cron log has a "done in Xs" line and `mtime` on every `/var/www/promo-tool/odds/*.json` is within the last 11 minutes.
+- [ ] T025 [US2] Append the `promo-tool.195-201-99-206.sslip.io` site block to `/etc/caddy/Caddyfile` per scraper/deploy.md (`root * /var/www/promo-tool`, `file_server`, `basic_auth { ... }`, JSON content-type + Cache-Control header matchers). Run `sudo caddy validate --config /etc/caddy/Caddyfile && sudo systemctl reload caddy`.
+- [ ] T026 [US2] Generate the maintainer's bcrypt hash with `caddy hash-password --plaintext '<password>'`, paste it into the `basic_auth` block inside the new site stanza in `/etc/caddy/Caddyfile`, `sudo systemctl reload caddy`. Verify from a separate machine that without `-u`, `curl https://promo-tool.195-201-99-206.sslip.io/sports.json` returns 401 (200 will follow once rsync lands JSON; 404 is expected until then).
 
-**Checkpoint**: smokes A–D in quickstart.md pass. Feed reachable over HTTPS + Basic Auth from any client.
+### GitHub Actions deploy plumbing (per FR-014)
+
+- [ ] T027a [US2] Mint a dedicated SSH key locally: `ssh-keygen -t ed25519 -f /tmp/vps_deploy_key -N '' -C 'gha-promo-tool-deploy'`. Two files emitted: private (`/tmp/vps_deploy_key`) and public (`.pub`).
+- [ ] T027b [US2] On the VPS, append the public key into `/home/deploy/.ssh/authorized_keys` with a command restriction so the key can only run `rrsync` inside the feed directory: `command="/usr/local/bin/rrsync /var/www/promo-tool",restrict ssh-ed25519 AAAA... gha-promo-tool-deploy`. Verify `sudo -u deploy ls -la /home/deploy/.ssh/authorized_keys` shows the line and perms are `600`.
+- [ ] T027c [US2] Run `ssh-keyscan -t ed25519 195.201.99.206 > /tmp/vps_known_hosts` locally. Save the output — it goes into a secret next.
+- [ ] T027d [US2] Add three GitHub repo secrets at `Settings → Secrets and variables → Actions → New repository secret`: `VPS_DEPLOY_KEY` (full contents of `/tmp/vps_deploy_key`, including the BEGIN/END markers), `VPS_KNOWN_HOSTS` (contents of `/tmp/vps_known_hosts`), `VPS_DEPLOY_USER` (`deploy`). Locally, `rm /tmp/vps_deploy_key /tmp/vps_deploy_key.pub /tmp/vps_known_hosts` once verified.
+- [ ] T027e [US2] Write `.github/workflows/scraper.yml`: `schedule: '*/10 * * * *'` + `workflow_dispatch`; jobs run `actions/checkout@v4`, then `node scraper/run.js` with `OUT_DIR=$RUNNER_TEMP/promo-out`, then ssh-agent + rsync using the three secrets. Commit + push. Workflow appears under Actions tab.
+- [ ] T027f [US2] Manually trigger the workflow: `gh workflow run scraper.yml`; `gh run watch`. Confirm the run completes green. SSH to the VPS: `sudo ls -la /var/www/promo-tool/odds/`. Files exist, owned by `deploy:caddy`.
+- [ ] T028 [US2] Wait 15 minutes for the schedule to fire on its own; run quickstart.md Smoke B. Confirm at least one scheduled run logs "done in Xs" and `mtime` on every `/var/www/promo-tool/odds/*.json` is within the last 15 minutes (allowing for GH cron drift).
+
+**Checkpoint**: smokes A–D in quickstart.md pass. Feed reachable over HTTPS + Basic Auth from any client; scheduled workflow visibly fires in Actions tab.
 
 ---
 
@@ -125,7 +136,7 @@ Single repo, dual deliverable per plan.md §"Structure Decision":
 **Independent Test**: after a cron run, every key in `sports.json` has a corresponding `odds/<key>.json`. Smoke I in `quickstart.md`.
 
 - [X] T032 [US4] Extend `scraper/sports.js` with four new entries — `soccer_epl`, `soccer_uefa_champs_league`, `tennis_atp_wta`, `mma_mixed_martial_arts` — per research.md R5 table. Use the Pinnacle league IDs and Action Network slugs documented there. Verify each leagueId via the verification curl noted in R5 before committing.
-- [ ] T033 [US4] Pull the latest from the VPS: `cd /opt/promo-tool && git pull`. Run the scraper once manually: `OUT_DIR=/var/www/promo-tool node scraper/run.js`. Confirm `sports.json` lists eight keys and each `odds/<key>.json` is a valid JSON array (may be `[]` for off-season sports).
+- [ ] T033 [US4] Commit + push the sports.js change. Trigger the scraper workflow manually (`gh workflow run scraper.yml`) so the next push lands quickly. Once green, SSH to the VPS (or `curl` with creds): confirm `sports.json` lists eight keys and each `odds/<key>.json` is a valid JSON array (may be `[]` for off-season sports).
 
 **Checkpoint**: Smoke I passes. Eight sport keys in `sports.json`.
 
@@ -149,11 +160,11 @@ Single repo, dual deliverable per plan.md §"Structure Decision":
 
 **Purpose**: doc, regression, soak, final constitution check.
 
-- [X] T037 Write `scraper/DEPLOY.md` body — fill the section headings using the commands from quickstart.md ops smokes A–D and research.md R2 + R6. Include: VPS prerequisites check, full caddy site block (production-ready), `caddy hash-password` workflow, basic_auth add/remove/list flow, cron line, log location, troubleshooting (401 chain, TLS expiry, disk-full failure mode).
-- [X] T038 Update `scraper/README.md` to link to `DEPLOY.md` and clarify that the feed now requires HTTP Basic Auth (per FR-013). Keep the dev `--dry-run` instructions intact.
+- [ ] T037 Rewrite `scraper/deploy.md` for the GitHub-Actions-runs-scraper architecture (R9). Sections: VPS prerequisites (caddy + rsync + rrsync), output directory perms, deploy-user creation, caddy site block, `caddy hash-password` workflow, basic_auth add/remove/list flow, SSH deploy-key mint + authorized_keys restriction, GitHub repo secrets, workflow trigger commands, troubleshooting (401 chain, rsync failure, stale feed, TLS expiry, disk-full failure mode). Cron-on-VPS instructions are removed entirely.
+- [ ] T038 Update `scraper/README.md` to link to `deploy.md`, clarify the scraper now runs on GitHub Actions (not VPS cron), and confirm the feed requires HTTP Basic Auth (per FR-013). Keep the dev `--dry-run` instructions intact.
 - [ ] T039 Run quickstart.md "Regression check — spec 001 still works" — execute all seven smoke tests in `specs/001-best-play-card/quickstart.md` against the vpsFeed-backed extension. Record pass/fail in a session note. Any failure blocks merge.
 - [X] T040 Run `node --test test/calc.test.js test/recommend.test.js test/betAndGet.test.js test/betSlip.test.js test/vpsFeed.test.js` and confirm all pass. Update the `test` script in `package.json` to include `test/vpsFeed.test.js`.
-- [ ] T041 24-hour soak per quickstart.md DoD — leave cron running for 24h, then tail `/var/log/promo-scraper.log`: assert ≥99% of expected fires logged "done" (SC-005); compute P95 of `last_update` ages across the latest `odds/*.json` snapshot (SC-002 ≤ 12 min).
+- [ ] T041 24-hour soak per quickstart.md DoD — leave the scheduled workflow running for 24h, then pull the run history (`gh run list -w scraper.yml --limit 200`): assert ≥95% of expected fires completed green (SC-005, relaxed for GH scheduler drift); compute P95 of `last_update` ages across the latest `odds/*.json` snapshot (SC-002 ≤ 20 min).
 - [ ] T041a SC-003 book-parity check during the soak — for each in-season sport in `sports.json`, count distinct cohort-book bookmaker `title`s present in the latest `odds/<key>.json` for DraftKings, FanDuel, BetMGM, Caesars. Compare against the same event keys pulled from The-Odds-API for that sport (one manual `fetchOdds` call with the maintainer's API key). Assert vpsFeed cohort-book set ⊇ The-Odds-API cohort-book set per event. Record gaps (if any) in a session note; an unjustified deficit blocks merge.
 - [ ] T042 Constitution post-implementation re-check: confirm `vpsFeed.js` does not log credentials anywhere; confirm no new `chrome.storage.local` keys were added; confirm zero new npm runtime deps on either client or scraper; confirm `host_permissions` did not widen beyond the maintainer's domain + The-Odds-API fallback (R8). Record the result in a session note.
 - [X] T043 [P] Update `CLAUDE.md` `<!-- SPECKIT START -->` block once spec 005 ships — point active plan/spec/research/data-model/quickstart links forward (or leave on 005 if 005 is the most recently shipped spec). No-op if no path drift.
@@ -176,7 +187,7 @@ Single repo, dual deliverable per plan.md §"Structure Decision":
 ### Within Each User Story
 
 - US3: tests T007–T012 written first; assert they fail against an empty `normalizeFeedUrl`; then implementation T013–T018.
-- US2: ops tasks T019 → T028 are strictly sequential (verify host + Node before clone, clone before first scraper run, first run before caddy site block, site block before basic_auth hashes, then cron).
+- US2: ops tasks T019 → T028 are mostly sequential. VPS-side (T019, T022, T023, T025, T026) must precede the GH Actions plumbing (T027a → T027f) since the deploy-key+authorized_keys handshake needs the `deploy` user to exist on the VPS. T028 (15-minute observation) is the final check.
 - US1: depends on real human time (≤90s budget) — cannot be automated.
 - US4: T032 then T033 sequentially.
 - US5: T034 → T035 → T036 sequentially (DOM patch before HTML removal before parity verify).
@@ -198,8 +209,9 @@ Single repo, dual deliverable per plan.md §"Structure Decision":
 - `popup/popup.html` is touched by T035 only.
 - `manifest.json` is touched by T006 only.
 - `scraper/sports.js` is touched by T032 only.
-- `scraper/DEPLOY.md` is touched by T002 (scaffold) and T037 (body).
+- `scraper/deploy.md` is touched by T002 (scaffold, predates R9) and T037 (full rewrite for R9 architecture).
 - `scraper/README.md` is touched by T038 only.
+- `.github/workflows/scraper.yml` is created by T027e only. `.github/workflows/pinnacle-probe.yml` is unchanged (kept for re-verification on host moves).
 
 ---
 

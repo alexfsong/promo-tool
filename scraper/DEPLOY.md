@@ -1,10 +1,18 @@
 # Deploying the promo-tool feed
 
-End-to-end ops guide for adding the promo-tool feed to the existing
-VPS at **195.201.99.206**. The host already runs **caddy** alongside
-sites `lisearch.195-201-99-206.sslip.io` and
-`portfolio.195-201-99-206.sslip.io`. This spec adds a third site:
-**`promo-tool.195-201-99-206.sslip.io`**.
+End-to-end ops guide for the promo-tool feed. The architecture is split:
+
+- **Scraper compute** runs on **GitHub Actions** (this repo). Free for
+  public repos, passes Pinnacle's Cloudflare WAF (which the VPS's Hetzner
+  IP does not — see `specs/005-vps-feed-cutover/research.md` R9).
+- **Static feed host** is the existing VPS at **195.201.99.206**, which
+  already runs **caddy** alongside `lisearch.195-201-99-206.sslip.io`
+  and `portfolio.195-201-99-206.sslip.io`. This guide adds a third site:
+  **`promo-tool.195-201-99-206.sslip.io`**.
+
+Every 10 minutes, the Actions workflow runs `node scraper/run.js`, then
+rsyncs `/var/www/promo-tool/` to the VPS over a restricted SSH key. caddy
+serves the result behind per-friend Basic Auth.
 
 DNS comes for free — [sslip.io](https://sslip.io) wildcard-resolves any
 `*.195-201-99-206.sslip.io` host to that IP. caddy auto-provisions and
@@ -15,65 +23,116 @@ auto-renews Let's Encrypt TLS on first request.
 - VPS reachable at `195.201.99.206` over SSH as a non-root user.
 - `caddy` v2+ running, with `/etc/caddy/Caddyfile` already configured for
   the two existing sites.
-- `node` ≥ 20 installed.
+- `rsync` installed on the VPS (Ubuntu default).
+- `gh` CLI authenticated locally for triggering workflow runs.
 
-Verify:
+Verify on the VPS:
 
 ```bash
 ssh maintainer@195.201.99.206
 caddy version       # expect v2.x
-node --version      # expect v20.x
+rsync --version     # expect 3.x
 systemctl status caddy --no-pager | head
 ```
 
-## Clone the repo + first scraper run
+Locate `rrsync` (the restricted-rsync wrapper):
 
 ```bash
-sudo mkdir -p /opt && sudo chown $USER:$USER /opt
-git clone <repo-url> /opt/promo-tool
+dpkg -L rsync | grep rrsync
+# Usually /usr/share/doc/rsync/scripts/rrsync (gzipped on some distros).
+sudo cp /usr/share/doc/rsync/scripts/rrsync /usr/local/bin/rrsync
+sudo gunzip /usr/local/bin/rrsync.gz 2>/dev/null || true
+sudo chmod +x /usr/local/bin/rrsync
+which rrsync        # expect /usr/local/bin/rrsync
+```
 
-sudo mkdir -p /var/www/promo-tool
-# caddy on Ubuntu runs as user `caddy`; give it read access:
-sudo chown -R $USER:caddy /var/www/promo-tool
+## Create the deploy user and the feed directory
+
+The scraper workflow rsyncs as a dedicated low-privilege user, `deploy`,
+restricted to writing inside `/var/www/promo-tool` only.
+
+```bash
+sudo useradd -m -s /bin/bash deploy
+sudo usermod -aG caddy deploy
+
+sudo mkdir -p /var/www/promo-tool/odds
+sudo chown -R deploy:caddy /var/www/promo-tool
 sudo chmod -R 750 /var/www/promo-tool
-
-# Dry-run first — confirms Pinnacle + Action Network reach from this IP.
-cd /opt/promo-tool/scraper && node run.js --dry-run
-
-# First real run.
-OUT_DIR=/var/www/promo-tool node /opt/promo-tool/scraper/run.js
-
-ls /var/www/promo-tool/
-ls /var/www/promo-tool/odds/
 ```
 
-## Generate per-friend Basic Auth credentials
+## Mint the deploy SSH key and pin it to rrsync
 
-caddy's `basic_auth` directive takes bcrypt hashes inline. Generate one
-per friend:
+Generate the key **locally** (not on the VPS):
 
 ```bash
-# For the maintainer:
-caddy hash-password --plaintext '<a-long-random-password>'
-# → $2a$14$abcdef...     (copy this)
-
-# For each friend, repeat with a different password. Keep the
-# plaintext in a password manager — the bcrypt hash is one-way.
+ssh-keygen -t ed25519 -f /tmp/vps_deploy_key -N '' -C 'gha-promo-tool-deploy'
+# Two files emitted:
+#   /tmp/vps_deploy_key       (private — goes into GitHub repo secret)
+#   /tmp/vps_deploy_key.pub   (public — goes into VPS authorized_keys)
 ```
 
-Send each friend exactly one string via DM:
+Capture the VPS host key fingerprint so the workflow doesn't trust a
+spoofed host:
+
+```bash
+ssh-keyscan -t ed25519 195.201.99.206 > /tmp/vps_known_hosts
+```
+
+On the VPS, install the public half with a `command=` restriction so
+this key can ONLY run rrsync inside the feed directory:
+
+```bash
+sudo -u deploy mkdir -p /home/deploy/.ssh
+sudo -u deploy chmod 700 /home/deploy/.ssh
+sudo -u deploy touch /home/deploy/.ssh/authorized_keys
+sudo -u deploy chmod 600 /home/deploy/.ssh/authorized_keys
+
+# Append a single line — paste the contents of /tmp/vps_deploy_key.pub
+# inline after the restriction prefix:
+sudo -u deploy $EDITOR /home/deploy/.ssh/authorized_keys
+```
+
+The line MUST look like (one line, no wraps):
 
 ```
-https://<their-username>:<their-password>@promo-tool.195-201-99-206.sslip.io
+command="/usr/local/bin/rrsync /var/www/promo-tool",restrict ssh-ed25519 AAAA...gha-promo-tool-deploy
 ```
 
-The extension's `vpsFeed` provider parses the `user:pass@` portion out
-of that URL and injects it as `Authorization: Basic …` on every request.
+Test from your laptop:
+
+```bash
+ssh -i /tmp/vps_deploy_key deploy@195.201.99.206 'ls /var/www/promo-tool'
+# Expect: rsync error message about "rrsync: only rsync allowed". This
+# confirms the key works AND the restriction is in force.
+
+# Sanity rsync — should succeed:
+echo '[]' > /tmp/sports.json
+rsync -av -e "ssh -i /tmp/vps_deploy_key" /tmp/sports.json deploy@195.201.99.206:./sports.json
+ssh maintainer@195.201.99.206 'cat /var/www/promo-tool/sports.json'   # → []
+rm /tmp/sports.json
+```
+
+## Add the GitHub repo secrets
+
+GitHub → repo Settings → Secrets and variables → Actions → New repository secret.
+Create three secrets:
+
+| Name | Value |
+|---|---|
+| `VPS_DEPLOY_KEY` | full contents of `/tmp/vps_deploy_key` (including the `-----BEGIN OPENSSH PRIVATE KEY-----` and `END` lines) |
+| `VPS_KNOWN_HOSTS` | full contents of `/tmp/vps_known_hosts` |
+| `VPS_DEPLOY_USER` | `deploy` |
+
+Once verified in the Actions tab, scrub the local copies:
+
+```bash
+shred -u /tmp/vps_deploy_key /tmp/vps_deploy_key.pub /tmp/vps_known_hosts
+```
 
 ## Add the caddy site
 
-Append the following block to `/etc/caddy/Caddyfile`. Replace the
-bcrypt hashes with the real ones you generated above.
+Append the following block to `/etc/caddy/Caddyfile`. Replace the bcrypt
+hash with the real one generated below.
 
 ```caddyfile
 promo-tool.195-201-99-206.sslip.io {
@@ -103,8 +162,8 @@ promo-tool.195-201-99-206.sslip.io {
 Reload:
 
 ```bash
-sudo caddy fmt --overwrite /etc/caddy/Caddyfile     # tidy formatting
-sudo caddy validate --config /etc/caddy/Caddyfile   # syntax check
+sudo caddy fmt --overwrite /etc/caddy/Caddyfile
+sudo caddy validate --config /etc/caddy/Caddyfile
 sudo systemctl reload caddy
 ```
 
@@ -113,10 +172,47 @@ Watch caddy's journal for the issuance:
 
 ```bash
 journalctl -u caddy -f --since '2 minutes ago'
-# Expect "certificate obtained successfully" within ~10s of the first request.
 ```
 
-## Verify end-to-end from a separate machine
+## Generate per-friend Basic Auth credentials
+
+caddy's `basic_auth` directive takes bcrypt hashes inline. Generate one
+per friend:
+
+```bash
+caddy hash-password --plaintext '<a-long-random-password>'
+# → $2a$14$abcdef...
+```
+
+Send each friend exactly one string via DM:
+
+```
+https://<their-username>:<their-password>@promo-tool.195-201-99-206.sslip.io
+```
+
+The extension's `vpsFeed` provider parses the `user:pass@` portion out
+of that URL and injects it as `Authorization: Basic …` on every request.
+
+## Write and trigger the scraper workflow
+
+The workflow file lives at `.github/workflows/scraper.yml` in this repo.
+Commit it, push, then trigger manually:
+
+```bash
+gh workflow run scraper.yml
+gh run watch
+```
+
+Expected run shape (≤ 90 s):
+
+1. checkout
+2. `node scraper/run.js` (writes JSON under `$RUNNER_TEMP/promo-out`)
+3. `ssh-agent` loads `VPS_DEPLOY_KEY`
+4. `rsync -az --delete $RUNNER_TEMP/promo-out/ <user>@195.201.99.206:./`
+   (the `command=`-restricted SSH wrapper pins the destination to
+   `/var/www/promo-tool` regardless of the path the workflow sends)
+
+Verify from a separate machine:
 
 ```bash
 # Without creds → 401.
@@ -131,43 +227,39 @@ curl -I http://promo-tool.195-201-99-206.sslip.io/sports.json
 # Expect: 308 → https://...
 ```
 
-## Cron
+## Observability
 
-Maintainer's crontab, runs every 10 minutes:
-
-```bash
-sudo touch /var/log/promo-scraper.log
-sudo chown $USER:$USER /var/log/promo-scraper.log
-
-crontab -e
-```
-
-Append:
-
-```cron
-*/10 * * * * cd /opt/promo-tool/scraper && OUT_DIR=/var/www/promo-tool node run.js >> /var/log/promo-scraper.log 2>&1
-```
-
-Wait 11 minutes, then verify:
+Recent runs:
 
 ```bash
-tail -20 /var/log/promo-scraper.log
-stat -c '%y %n' /var/www/promo-tool/sports.json /var/www/promo-tool/odds/*.json
-# Every mtime should be within the last 11 minutes.
+gh run list -w scraper.yml --limit 20
+gh run view <run-id> --log
+```
+
+Freshness from the VPS:
+
+```bash
+ssh maintainer@195.201.99.206 \
+  'stat -c "%y %n" /var/www/promo-tool/sports.json /var/www/promo-tool/odds/*.json'
+```
+
+Every mtime should be within the last ~15 minutes (allowing for GitHub
+Actions scheduler drift).
+
+caddy access log (in case auth/cache misconfig surfaces):
+
+```bash
+ssh maintainer@195.201.99.206 'sudo tail -n 50 /var/log/caddy/promo-tool.log'
 ```
 
 ## Adding a friend
 
 ```bash
-# Generate a hash:
 caddy hash-password --plaintext '<their-new-password>'
-
-# Append a line inside the basic_auth block in /etc/caddy/Caddyfile:
 sudo $EDITOR /etc/caddy/Caddyfile
 #   add:    newfriend  $2a$14$<their-bcrypt-hash>
-
 sudo caddy validate --config /etc/caddy/Caddyfile
-sudo systemctl reload caddy   # no downtime — caddy reload is graceful
+sudo systemctl reload caddy
 ```
 
 DM them: `https://newfriend:<password>@promo-tool.195-201-99-206.sslip.io`.
@@ -192,13 +284,30 @@ curl -u maintainer:<password> -o /dev/null -w '%{http_code}\n' \
 # Expect: 200
 ```
 
+## Rotating the deploy SSH key
+
+If `VPS_DEPLOY_KEY` is ever suspected leaked:
+
+1. Mint a new key locally (see "Mint the deploy SSH key" above).
+2. On the VPS, replace the old line in `/home/deploy/.ssh/authorized_keys`
+   with the new public key (keeping the `command=` restriction).
+3. Update the `VPS_DEPLOY_KEY` repo secret in GitHub.
+4. `gh workflow run scraper.yml` to confirm the new key works.
+5. Shred the local copies.
+
+Blast radius of a leaked key (before rotation): an attacker can only
+overwrite or delete files under `/var/www/promo-tool` via rsync. They
+cannot get a shell, escalate, or touch other paths on the VPS — that's
+what the `command=` restriction enforces.
+
 ## Standby host
 
 If 195.201.99.206 dies long-term, stand up a replacement and either:
 
-- Move the same Caddyfile + hashes to the new host, repoint
-  `promo-tool.<new-ip>.sslip.io` (different hostname — friends need
-  the new URL via DM), **or**
+- Move the Caddyfile + the `deploy` user + the `authorized_keys` line
+  to the new host. Update `VPS_KNOWN_HOSTS` (new fingerprint), update the
+  workflow's hardcoded IP (if any), and repoint
+  `promo-tool.<new-ip>.sslip.io` (friends need the new URL via DM), **or**
 - If you own a real domain and have CNAMEd `feeds.<your-domain>.tld`
   in front of sslip, just swap the A record. Friends keep their URL.
 
@@ -213,16 +322,20 @@ friend needs to re-install the unpacked extension. Plan accordingly.
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `curl ... → 401` even with `-u user:pass` | typo in password OR wrong bcrypt hash in Caddyfile | regenerate hash with `caddy hash-password`, update Caddyfile, reload |
-| `curl ... → curl: (60) SSL certificate problem` | caddy hasn't issued the cert yet — DNS or rate-limit issue | `journalctl -u caddy -f`; verify `dig +short promo-tool.195-201-99-206.sslip.io` returns the IP |
-| `curl ... → 404 sports.json` | scraper hasn't run yet, or `OUT_DIR` mismatch | `ls /var/www/promo-tool/` and re-run `OUT_DIR=/var/www/promo-tool node run.js` |
-| `curl ... → 403` | caddy can't read the file — perms wrong | `sudo chown -R $USER:caddy /var/www/promo-tool && sudo chmod -R 750 /var/www/promo-tool` |
-| `cron` log shows `error: ENOSPC` | disk full | `df -h`; rotate logs with `logrotate` |
-| All `odds/*.json` are stale (mtime > 30 min) | cron stopped, or scraper hangs | `systemctl status cron` ; run scraper manually to see errors |
-| One source consistently errors in log | Pinnacle key rotated OR Action Network book_id rotated | patch `scraper/sources/<src>.js`, redeploy |
+| Actions run fails on the rsync step with "Permission denied (publickey)" | `VPS_DEPLOY_KEY` secret missing/corrupt OR public key not in `~deploy/.ssh/authorized_keys` | re-paste both halves; verify file perms (700 on `.ssh`, 600 on `authorized_keys`) |
+| Actions run fails with "Host key verification failed" | `VPS_KNOWN_HOSTS` secret stale (VPS reinstalled, fingerprint rotated) | `ssh-keyscan -t ed25519 195.201.99.206` and overwrite the secret |
+| Actions run succeeds but `/var/www/promo-tool` empty | `command=` restriction or `rrsync` arguments wrong; the workflow's rsync flags don't match what rrsync allows | `gh run view <id> --log` and look at the rsync error; the rrsync man page lists the allowed flags |
+| `curl ... → 404 sports.json` | workflow hasn't run yet, or rsync wrote into the wrong directory | check `ls -la /var/www/promo-tool/` and `gh run list -w scraper.yml` |
+| `curl ... → 403` | caddy can't read the file — perms wrong | `sudo chown -R deploy:caddy /var/www/promo-tool && sudo chmod -R 750 /var/www/promo-tool` |
+| `gh run list` shows scheduled runs missing | GitHub's scheduled-workflow scheduler skipping under load — known behavior | manually `gh workflow run scraper.yml` to catch up; SC-005 budget allows ≤5% miss rate |
+| All `odds/*.json` are stale (mtime > 30 min) and Actions tab is silent | workflow disabled (auto-disables after 60 days of repo inactivity for scheduled workflows) | re-enable in the Actions tab; `gh workflow enable scraper.yml` |
+| Pinnacle source 403 in the Actions log | Cloudflare WAF rotated to block Azure IPs too | re-run `pinnacle-probe.yml` from a fresh runner; if confirmed, swap to laptop-rsync as a temporary fallback (see specs/005-vps-feed-cutover/research.md R9 alternatives) |
+| One source consistently errors in log | Pinnacle key rotated OR Action Network book_id rotated | patch `scraper/sources/<src>.js`, push |
 
 ## Cost / capacity check
 
 - VPS: already paid for (host runs lisearch + portfolio).
-- Bandwidth: ≤ 10 friends × ~6 reads/hour × < 1 MB each ≈ < 5 GB / month additive.
+- GitHub Actions: free for public repos. If repo is private, ~3,000 min/mo at `*/10` cadence — slip the cron to `*/15` or accept ~$8/mo overage.
+- Bandwidth: ≤ 10 friends × ~6 reads/hour × < 1 MB each ≈ < 5 GB / month additive on the VPS.
 - TLS: free via Let's Encrypt (caddy auto-renews).
-- Total marginal cost: **$0 / month** (improves on SC-004's ≤ $5 target).
+- Total marginal cost: **$0 / month** (public repo) — improves on SC-004's ≤ $5 target.

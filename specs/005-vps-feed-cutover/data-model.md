@@ -130,15 +130,34 @@ by deleting the line inside the block and running
 `sudo systemctl reload caddy` (graceful, no downtime). caddy re-reads
 the Caddyfile on reload.
 
-### `CronEntry`
+### `ScheduledWorkflow`
 
-Single line in the maintainer's crontab:
+`.github/workflows/scraper.yml` in this repo. Triggers:
+
+```yaml
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+```
+
+The workflow checks out the repo, runs `node scraper/run.js` with `OUT_DIR=$RUNNER_TEMP/promo-out`, then `rsync -az --delete $OUT_DIR/ deploy@195.201.99.206:/var/www/promo-tool/` using the SSH private key from the `VPS_DEPLOY_KEY` repo secret and the host key from `VPS_KNOWN_HOSTS`.
+
+Required GitHub repo secrets (Settings → Secrets and variables → Actions):
+
+| Secret | Value |
+|---|---|
+| `VPS_DEPLOY_KEY` | full PEM-encoded ed25519 private key (mint with `ssh-keygen -t ed25519 -C 'gha-promo-tool-deploy' -f vps_deploy_key -N ''`) |
+| `VPS_KNOWN_HOSTS` | output of `ssh-keyscan -t ed25519 195.201.99.206` |
+| `VPS_DEPLOY_USER` | username on the VPS (e.g., `deploy`) — optional if hardcoded in the workflow |
+
+VPS-side `~/.ssh/authorized_keys` for `VPS_DEPLOY_USER`:
 
 ```
-*/10 * * * * cd /opt/promo-tool/scraper && OUT_DIR=/var/www/promo-tool node run.js >> /var/log/promo-scraper.log 2>&1
+command="rrsync /var/www/promo-tool",restrict ssh-ed25519 AAAA... gha-promo-tool-deploy
 ```
 
-Per `scraper/README.md`. Identical between dev and prod.
+(`rrsync` ships with rsync on Debian/Ubuntu under `/usr/share/doc/rsync/scripts/rrsync`.)
 
 ### `FeedHostInventory`
 

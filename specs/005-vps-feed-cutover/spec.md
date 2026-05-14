@@ -51,25 +51,28 @@ A non-technical friend receives a Chrome-extensions Load-Unpacked link plus a si
 
 ---
 
-### User Story 2 — Scraper runs unattended on a VPS (Priority: P1)
+### User Story 2 — Scraper runs unattended on GitHub Actions (Priority: P1)
 
-A cron job on the maintainer's existing VPS at `195.201.99.206` executes `scraper/run.js` every 10 minutes. The resulting JSON files are served as static assets over HTTPS by caddy (already running on the host). The job survives transient source failures (Pinnacle 5xx, Action Network 4xx for a single sport) and logs them without crashing the run.
+A scheduled GitHub Actions workflow in this repo executes `scraper/run.js` every 10 minutes on a hosted Azure runner, then rsyncs the output directory to `/var/www/promo-tool/` on the maintainer's existing VPS at `195.201.99.206` over SSH. The VPS serves the JSON as static assets over HTTPS via caddy (already running on the host). The job survives transient source failures (Pinnacle 5xx, Action Network 4xx for a single sport) and logs them without crashing the run.
 
-**Why this priority**: Without a running scraper the feed is empty and US1 doesn't ship. This is the irreducible ops scope.
+**Why this priority**: Without a running scraper the feed is empty and US1 doesn't ship. This is the irreducible ops scope. (The split between scraper host and feed host exists because the VPS's Hetzner IP is hard-blocked by Pinnacle's Cloudflare WAF — see research.md R9 for the probe evidence.)
 
-**Independent Test**: SSH to the VPS. Inspect `cron` log: most recent run within 11 minutes. `curl https://your.host/promo-tool/sports.json` returns a valid JSON array. `curl https://your.host/promo-tool/odds/americanfootball_nfl.json` returns a non-empty event array during NFL season (or an empty array off-season — still valid JSON).
+**Independent Test**: From the Actions tab (or `gh run list -w scraper.yml`), confirm a successful run within the last 15 minutes. `curl https://promo-tool.195-201-99-206.sslip.io/sports.json` (with Basic Auth) returns a valid JSON array. `curl .../odds/americanfootball_nfl.json` returns a non-empty event array during NFL season (or an empty array off-season — still valid JSON). SSH to the VPS and confirm `mtime` on `/var/www/promo-tool/*` is within the last 15 minutes.
 
 **Acceptance Scenarios**:
 
-1. **Given** the host is up and the cron entry is installed,
+1. **Given** the workflow is scheduled and the SSH deploy key is installed on the VPS,
    **When** ten minutes elapse,
-   **Then** `sports.json` and `odds/*.json` files have an mtime within the last 11 minutes.
+   **Then** at least one workflow run completes successfully and the `sports.json` and `odds/*.json` files on the VPS have an mtime within the last 15 minutes (allowing for GitHub's scheduled-workflow cron drift).
 2. **Given** one source (e.g., Pinnacle) returns 5xx for a single run,
-   **When** the cron fires,
-   **Then** the other source's events are still written to `odds/*.json`; the failed source is logged and the run exits 0.
+   **When** the workflow fires,
+   **Then** the other source's events are still written to the output directory and rsynced; the failed source is logged in the Actions run log and the workflow exits 0.
 3. **Given** both sources fail for a sport,
-   **When** the cron fires,
+   **When** the workflow fires,
    **Then** that sport's `odds/<key>.json` is written as `[]` (empty array, not deleted, not stale), and the client renders an empty-state for that sport.
+4. **Given** the rsync step fails (VPS unreachable, SSH key revoked),
+   **When** the workflow fires,
+   **Then** the workflow run is marked failed in the Actions UI, the previous run's JSON on the VPS is left in place (clients see stale data, spec 004 surfaces the staleness), and the failure is loud enough for the maintainer to notice on the next sweep.
 
 ---
 
@@ -142,8 +145,10 @@ The single credentials field in Settings re-labels for the feed model. Hint text
 - **Feed URL pasted without credentials**: A friend pastes the bare host URL (no `<user>:<pass>@` userinfo) into Settings. The first request fails with 401. The extension surfaces "Feed credentials rejected — check the URL you pasted in Settings." No retry, no fallback.
 - **Credentials in URL contain reserved characters**: Passwords with `@`, `:`, or `/` MUST be percent-encoded by the maintainer when distributing them (e.g., `p@ss` → `p%40ss`). The provider's URL parser MUST handle percent-decoded credentials correctly.
 - **Friend leaks credentials**: Maintainer deletes that friend's line inside the `basic_auth { ... }` block in `/etc/caddy/Caddyfile` and reloads caddy. That friend re-onboards with a new credential; other friends are unaffected.
-- **Feed serves stale data (cron stopped)**: Out of scope here; spec 004's staleness badge surfaces this. This spec MUST set `last_update` in the per-bookmaker payload accurately (already does) so spec 004 can read it.
-- **VPS disk full**: Cron writes will fail. The previous run's JSON remains in place — clients see stale data, the staleness badge fires (spec 004). Operator deals with disk. Out of scope here.
+- **Feed serves stale data (workflow stopped / disabled)**: Out of scope here; spec 004's staleness badge surfaces this. This spec MUST set `last_update` in the per-bookmaker payload accurately (already does) so spec 004 can read it.
+- **VPS disk full**: rsync from the Actions runner will fail. The previous run's JSON remains in place — clients see stale data, the staleness badge fires (spec 004). Operator deals with disk. Out of scope here.
+- **GitHub Actions outage / scheduled-workflow cron drift**: GitHub's scheduled-workflow scheduler is best-effort and skips runs under load. Single missed slot = up to a 20-minute staleness window, absorbed by SC-002's 20-min budget. Multi-hour outage = stale feed surfaces via spec 004's badge. No in-extension mitigation in this spec.
+- **SSH deploy key on VPS compromised**: An attacker with the private key can only `rsync --delete` into `/var/www/promo-tool/` (the key is `command=`-restricted on the VPS — see scraper/deploy.md). Worst-case blast radius is a wiped or vandalized feed directory; clients then see a stale-data state until the maintainer rotates the key and re-runs the workflow. No further VPS access leaks via this key.
 - **CORS**: The feed is consumed by the extension via `fetch`; MV3 service worker bypasses CORS via `host_permissions`. The manifest MUST add the chosen feed host to `host_permissions` (the only manifest change in this spec).
 - **TLS certificate expiry**: caddy auto-provisions and auto-renews Let's Encrypt certs. Out-of-scope failure mode if auto-renew misfires (caddy retries on every reload).
 - **Both sources start returning structurally different data (rebrand, API rotation)**: Source modules already log per-source errors; the merger is robust to a single source dropping. Hand-fixable; expected once or twice per year.
@@ -158,10 +163,11 @@ The single credentials field in Settings re-labels for the feed model. Hint text
 - **FR-004**: System MUST surface feed errors with a one-sentence, feed-URL-aware error message (not a generic network error). The user MUST be able to recover by editing the URL in Settings.
 - **FR-005**: System MUST keep `theOddsApi` provider module functional and unit-testable. Removing it is a separate spec.
 - **FR-006**: System MUST relabel the Settings credential field copy based on the active provider's identity, so that swapping providers swaps the user-facing label without HTML changes. Acceptable: a per-provider copy block exported from each provider module (e.g., `provider.credentialLabel = 'Feed URL'`).
-- **FR-007**: Scraper deployment MUST use a cron schedule that runs at least every 10 minutes. Each run MUST write `sports.json` and `odds/<key>.json` for every sport in `sports.js`, including empty `[]` for sports whose sources all failed or are off-season.
+- **FR-007**: Scraper deployment MUST use a GitHub Actions scheduled workflow with `cron: '*/10 * * * *'` (every 10 minutes; GitHub's scheduler is best-effort and may delay or skip runs under load — see SC-002 / SC-005 for the relaxed budgets). Each run MUST write `sports.json` and `odds/<key>.json` for every sport in `sports.js` (including empty `[]` for sports whose sources all failed or are off-season) and rsync the output directory to `/var/www/promo-tool/` on the VPS over SSH. The workflow MUST also support `workflow_dispatch` so the maintainer can trigger an ad-hoc run.
 - **FR-008**: Scraper output MUST remain byte-identical in shape to the The-Odds-API event response (already enforced by `scraper/normalize.js`). Any change to the shape MUST flow through `scraper/normalize.js` so both providers stay swappable.
 - **FR-009**: Scraper `sports.js` MUST be extended to include, at minimum: NFL, NBA, MLB, NHL, EPL, Champions League, ATP+WTA combined tennis feed (provider permitting), and UFC. The exact The-Odds-API-compatible `key`s MUST be used so spec 001's dropdowns and storage keys work unchanged.
-- **FR-010**: Scraper MUST log each source failure with sport key + source name and exit zero unless every sport across every source failed in a single run. A single-sport, single-source failure MUST NOT prevent other sports from being written.
+- **FR-010**: Scraper MUST log each source failure with sport key + source name and exit zero unless every sport across every source failed in a single run. A single-sport, single-source failure MUST NOT prevent other sports from being written. Source-failure logs surface in the Actions run output and are reviewable via the Actions tab or `gh run view`.
+- **FR-014**: The rsync deployment step MUST use an SSH key dedicated to this workflow. The corresponding VPS-side `authorized_keys` entry MUST restrict the key to running rsync inside `/var/www/promo-tool/` only (via OpenSSH `command=`, `restrict`, or the `rrsync` wrapper). The private key MUST live only in GitHub repo secrets (e.g., `VPS_DEPLOY_KEY`), never in the repo tree. The key MUST be rotatable by the maintainer without coordinating with friends.
 - **FR-011**: Feed host MUST serve over HTTPS. No HTTP-only fallback. The extension MUST refuse `http://` feed URLs in Settings (surface a one-sentence error: "Feed URL must start with https://"). Basic Auth credentials MUST only be sent over HTTPS — refusal of `http://` is what makes credentials-in-URL acceptable.
 - **FR-013**: The feed host MUST enforce HTTP Basic Auth on every odds endpoint (per Clarifications 2026-05-13). The web server (caddy on the maintainer's existing VPS at 195.201.99.206) MUST keep per-friend bcrypt credentials so individual lines can be revoked without disrupting other friends — implemented via caddy's `basic_auth` directive (one stanza per friend, hashes generated with `caddy hash-password`). On 401, the extension MUST surface a one-sentence error referencing Settings ("Feed credentials rejected — check the URL you pasted in Settings"). On 403, the extension MUST treat it the same as 401 (do not retry without user intervention).
 - **FR-012**: Cutover MUST NOT remove any storage keys used by spec 001 (`promoType`, `advancedMode`, `myBooks`, `selectedBooks`, `oddsApiKey`). FR-001 only changes what the provider does with the existing `oddsApiKey` value.
@@ -179,18 +185,19 @@ The single credentials field in Settings re-labels for the feed model. Hint text
 ### Measurable Outcomes
 
 - **SC-001**: A friend with no prior tool exposure goes from "extension installed" to "first Best Play card visible" in **under 90 seconds** (relaxed from 60s after the Clarifications 2026-05-13 decision to require per-friend Basic Auth — the credentials-in-URL paste step adds ~15–20s of friction over the unauthenticated path). No The-Odds-API signup or email exchange is required.
-- **SC-002**: Feed freshness: P95 of per-sport `last_update` ages is **≤ 12 minutes** (10-min cron + buffer), measured across one continuous 24-hour window.
+- **SC-002**: Feed freshness: P95 of per-sport `last_update` ages is **≤ 20 minutes** (10-min cron + GitHub Actions scheduler drift + rsync transfer), measured across one continuous 24-hour window. (Relaxed from 12 min after R9 moved the scraper to GitHub-hosted runners; GH's scheduled-workflow scheduler is best-effort.)
 - **SC-003**: Provider parity: for any single event present in both feeds during the verification window, the bookmaker set offered by the vpsFeed is **≥ the bookmaker set offered by The-Odds-API** for the friend cohort's used books (DraftKings, FanDuel, BetMGM, Caesars).
-- **SC-004**: Operating cost: **≤ $5/month** for VPS + bandwidth at 5 friend-cohort users hitting it every ~5 minutes during active sessions.
-- **SC-005**: One-month operational stability: cron runs **≥ 99%** of scheduled fires (allowing for VPS reboots and source 5xx). Measured from cron log.
+- **SC-004**: Operating cost: **$0/month** marginal (existing VPS is paid for; GitHub Actions is free for public repos; the only new resource is bandwidth, which is sub-MB per request at ≤10 readers). Falls comfortably under the original ≤$5/mo target.
+- **SC-005**: One-month operational stability: GitHub Actions scheduled-workflow runs **≥ 95%** of expected fires (allowing for GitHub's known cron drift and source 5xx). Measured from the Actions run history. (Relaxed from 99% after R9 — GH's scheduler skips slots under load; recovering with a manual `gh workflow run` is acceptable.)
 - **SC-006**: Zero new chrome-extension permissions beyond `host_permissions` for the chosen feed host. `storage` and `sidePanel` remain the only `permissions`.
 
 ## Assumptions
 
-- The maintainer operates a single VPS for the friend cohort (per Clarifications 2026-05-13). Friends never provision or manage hosting. Provider: Hetzner, DigitalOcean, Fly.io basic tier, or similar at ≤$5/mo. Bandwidth requirements are trivial — the feed is JSON, sub-MB per sport, served to ≤10 readers.
-- Pinnacle's guest Arcadia endpoint (`guest.api.arcadia.pinnacle.com`) and Action Network's public scoreboard remain accessible without auth. Both have been stable for 12+ months. If either rotates, the source module is patched in a follow-up — the other source covers the gap.
+- The maintainer operates a single VPS for the friend cohort (per Clarifications 2026-05-13). Friends never provision or manage hosting. The VPS is a static-file host only — the scraper itself runs on GitHub Actions and pushes JSON to the VPS over SSH (per research.md R9). Provider for the VPS: Hetzner (already in use). Bandwidth requirements are trivial — the feed is JSON, sub-MB per sport, served to ≤10 readers.
+- This repository is **public on GitHub**, so the scheduled scraper workflow runs on unlimited free Actions minutes. If the maintainer later flips the repo private, the cron rate must drop to `*/15` or the maintainer accepts an ~$8/mo Actions-overage charge (see R9).
+- Pinnacle's guest Arcadia endpoint (`guest.api.arcadia.pinnacle.com`) and Action Network's public scoreboard remain accessible from GitHub-hosted Azure runner IPs. Probe run `25836475374` (2026-05-13) confirmed Pinnacle 200 / Action Network 200 from a fresh runner. Hetzner DC ranges remain Cloudflare-WAF'd off Pinnacle — running the scraper directly on the VPS is not viable today.
 - Friend cohort uses Chromium-based browsers exclusively. Manifest V3, side panel API.
-- caddy (already installed on the host) handles static serving; no application server runs on the VPS. `node scraper/run.js` is the only persistent workload (and it isn't persistent — cron forks a Node process every 10 minutes).
+- caddy (already installed on the host) handles static serving; no application server runs on the VPS. The scraper does not run on the VPS at all — only `rsync` over SSH into `/var/www/promo-tool/` (originated by the GitHub Actions runner) hits the host.
 - The existing `scraper/normalize.js` contract holds. If a new source is added later (spec 006 content-script), it conforms to `SourceEvent` and merges via `mergeEvents`.
 - Spec 004 (odds hygiene) ships after this and consumes `last_update` from the feed payloads. This spec sets the field; spec 004 surfaces it.
 - The friend cohort tolerates **occasional** per-source outages (one provider 5xx, half a sport missing for 10 min). The two-source design absorbs this without UI changes.
@@ -198,13 +205,14 @@ The single credentials field in Settings re-labels for the feed model. Hint text
 
 ## Implementation Order (informational, not normative)
 
-1. Reuse the existing VPS at `195.201.99.206` (caddy already running). Confirm `node` ≥ 20 is present.
-2. Clone repo to `/opt/promo-tool`, install cron entry.
-3. First manual `node scraper/run.js --dry-run` to confirm sources are reachable from the host's IP.
-4. First non-dry run; verify JSON files are written to `/var/www/promo-tool/`.
-5. Append the `promo-tool.195-201-99-206.sslip.io` site block to `/etc/caddy/Caddyfile` with `basic_auth`; reload caddy.
-6. Extend `scraper/sports.js` (FR-009).
-7. Update `src/api/provider.js` default (FR-001) + `manifest.json` `host_permissions` (FR-003).
-8. Add per-provider `credentialLabel` and wire Settings copy (FR-006).
-9. Friend-onboard one test user end-to-end. Time it (SC-001).
-10. Watch cron log for 24 hours (SC-002, SC-005).
+1. Reuse the existing VPS at `195.201.99.206` (caddy already running). Create the output directory `/var/www/promo-tool/` with caddy-readable perms.
+2. Append the `promo-tool.195-201-99-206.sslip.io` site block to `/etc/caddy/Caddyfile` with `basic_auth`; reload caddy. Generate the maintainer's bcrypt hash.
+3. On the VPS, create a dedicated `deploy` user (or repurpose an existing one) with an SSH key restricted to running `rrsync /var/www/promo-tool` (per FR-014).
+4. Mint a fresh ed25519 SSH key locally; paste the **public** half into the VPS user's `authorized_keys` with the `command=`/`restrict` restriction; paste the **private** half into a GitHub repo secret named `VPS_DEPLOY_KEY` (plus host fingerprint into `VPS_KNOWN_HOSTS`).
+5. Add `.github/workflows/scraper.yml` with `schedule: */10 * * * *` + `workflow_dispatch`; runs `node scraper/run.js` then `rsync` to the VPS.
+6. Trigger the workflow manually (`gh workflow run scraper.yml`) and confirm JSON files appear under `/var/www/promo-tool/`.
+7. Extend `scraper/sports.js` (FR-009).
+8. Update `src/api/provider.js` default (FR-001) + `manifest.json` `host_permissions` (FR-003).
+9. Add per-provider `credentialLabel` and wire Settings copy (FR-006).
+10. Friend-onboard one test user end-to-end. Time it (SC-001).
+11. Watch Actions run history for 24 hours (SC-002, SC-005).
