@@ -51,8 +51,9 @@ jobs:
           OUT_DIR: ${{ runner.temp }}/promo-out
           DEPLOY_USER: ${{ secrets.VPS_DEPLOY_USER }}
         run: |
-          # The remote side runs rrsync pinned to /var/www/promo-tool, so
-          # the path we send (`./`) is interpreted relative to that root.
+          # The remote side runs rrsync pinned to /var/www/promo-tool.
+          # Modern (Python) rrsync rejects an explicit `./` path as unsafe —
+          # send an empty target after the colon and let rrsync prepend its root.
           rsync -az --delete \
             "$OUT_DIR/" \
-            "$DEPLOY_USER@195.201.99.206:./"
+            "$DEPLOY_USER@195.201.99.206:"
