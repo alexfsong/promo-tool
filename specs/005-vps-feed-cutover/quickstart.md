@@ -65,8 +65,12 @@ ssh deploy@195.201.99.206 'stat -c "%y %n" /var/www/promo-tool/sports.json /var/
 caddy hash-password --plaintext '<maintainer-password>'
 caddy hash-password --plaintext '<alice-password>'
 
-# 2. Append the new site block to /etc/caddy/Caddyfile per scraper/DEPLOY.md.
-#    Paste the two hashes inside the basic_auth { ... } stanza.
+# 2. Append the new site block to /etc/caddy/Caddyfile per scraper/deploy.md.
+#    Paste the two hashes inside the `basicauth { ... }` stanza
+#    (NOT `basic_auth` — the newer directive wants base64-encoded hashes
+#    and rejects raw bcrypt). Do NOT include a `log { output file ... }`
+#    block — caddy's sandbox blocks file writes under /var/log/caddy on
+#    this host; journalctl captures access logs anyway.
 sudo $EDITOR /etc/caddy/Caddyfile
 
 # 3. Validate + reload (graceful, no downtime).
@@ -95,7 +99,7 @@ curl -I http://promo-tool.195-201-99-206.sslip.io/sports.json
 ```bash
 # Add a friend.
 caddy hash-password --plaintext '<bob-password>'
-# Paste a new line inside the basic_auth block: bob $2a$14$...
+# Paste a new line inside the basicauth block: bob $2a$14$...
 sudo $EDITOR /etc/caddy/Caddyfile
 sudo systemctl reload caddy
 
@@ -105,7 +109,7 @@ curl -u bob:<password> -o /dev/null -w '%{http_code}\n' https://promo-tool.195-2
 
 # Revoke bob.
 sudo $EDITOR /etc/caddy/Caddyfile
-# Delete bob's line inside basic_auth { }.
+# Delete bob's line inside basicauth { }.
 sudo systemctl reload caddy
 
 # Re-verify.

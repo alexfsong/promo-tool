@@ -35,15 +35,18 @@ rsync --version     # expect 3.x
 systemctl status caddy --no-pager | head
 ```
 
-Locate `rrsync` (the restricted-rsync wrapper):
+Install `rrsync` (the restricted-rsync wrapper). **Do not use the version
+shipped with the Ubuntu `rsync` package** — it is an older Perl script
+that rejects flags emitted by modern rsync clients
+(`/usr/local/bin/rrsync error: invalid rsync-command syntax or options`).
+Grab the upstream Python version, which accepts the current flag set:
 
 ```bash
-dpkg -L rsync | grep rrsync
-# Usually /usr/share/doc/rsync/scripts/rrsync (gzipped on some distros).
-sudo cp /usr/share/doc/rsync/scripts/rrsync /usr/local/bin/rrsync
-sudo gunzip /usr/local/bin/rrsync.gz 2>/dev/null || true
+sudo curl -fsSL -o /usr/local/bin/rrsync \
+  https://raw.githubusercontent.com/RsyncProject/rsync/master/support/rrsync
 sudo chmod +x /usr/local/bin/rrsync
-which rrsync        # expect /usr/local/bin/rrsync
+head -3 /usr/local/bin/rrsync   # expect: #!/usr/bin/env python3
+which rrsync                     # expect: /usr/local/bin/rrsync
 ```
 
 ## Create the deploy user and the feed directory
@@ -132,14 +135,14 @@ shred -u /tmp/vps_deploy_key /tmp/vps_deploy_key.pub /tmp/vps_known_hosts
 ## Add the caddy site
 
 Append the following block to `/etc/caddy/Caddyfile`. Replace the bcrypt
-hash with the real one generated below.
+hash placeholder with the real one generated below.
 
 ```caddyfile
 promo-tool.195-201-99-206.sslip.io {
     root * /var/www/promo-tool
     file_server
 
-    basic_auth {
+    basicauth {
         maintainer $2a$14$<maintainer-bcrypt-hash>
         # alice    $2a$14$<alice-bcrypt-hash>
         # bob      $2a$14$<bob-bcrypt-hash>
@@ -152,12 +155,24 @@ promo-tool.195-201-99-206.sslip.io {
     }
 
     encode gzip
-    log {
-        output file /var/log/caddy/promo-tool.log
-        format console
-    }
 }
 ```
+
+Two non-obvious choices baked into the block above:
+
+- **`basicauth` not `basic_auth`**: caddy v2 has both directives. The
+  newer `basic_auth` expects passwords as **base64-encoded** bcrypt and
+  rejects a raw `$2a$14$...` hash with `illegal base64 data at input
+  byte 2`. The older `basicauth` directive accepts raw bcrypt directly,
+  which matches what `caddy hash-password` emits on this host. Using
+  `basicauth` is what works without conversion.
+- **No `log { output file ... }` block**: on this host, caddy's
+  systemd unit (`ProtectSystem=full` plus AppArmor) cannot create or
+  write to files inside `/var/log/caddy/`, even when the file is
+  pre-created `caddy:caddy 640`. Reload silently times out after 90s
+  with `permission denied`. caddy still logs everything to the systemd
+  journal — tail with `sudo journalctl -u caddy -f` — so the file
+  output is redundant.
 
 Reload:
 
@@ -165,6 +180,14 @@ Reload:
 sudo caddy fmt --overwrite /etc/caddy/Caddyfile
 sudo caddy validate --config /etc/caddy/Caddyfile
 sudo systemctl reload caddy
+```
+
+If reload hangs >10s, caddy is wedged on a stale failed reload
+(`Active: reloading (reload-notify)`). Hard-restart to clear it
+(causes a ~1s blip for the other sites on the host):
+
+```bash
+sudo systemctl restart caddy
 ```
 
 caddy provisions the TLS cert on the first request to that hostname.
@@ -183,6 +206,12 @@ per friend:
 caddy hash-password --plaintext '<a-long-random-password>'
 # → $2a$14$abcdef...
 ```
+
+**Save the plaintext to a password manager before doing anything else.**
+The hash is one-way — losing the plaintext means re-generating the hash
+and re-distributing the new URL to every friend who already has the old
+one. Repeat the same step for each friend (each gets a unique
+username + password).
 
 Send each friend exactly one string via DM:
 
@@ -208,9 +237,11 @@ Expected run shape (≤ 90 s):
 1. checkout
 2. `node scraper/run.js` (writes JSON under `$RUNNER_TEMP/promo-out`)
 3. `ssh-agent` loads `VPS_DEPLOY_KEY`
-4. `rsync -az --delete $RUNNER_TEMP/promo-out/ <user>@195.201.99.206:./`
-   (the `command=`-restricted SSH wrapper pins the destination to
-   `/var/www/promo-tool` regardless of the path the workflow sends)
+4. `rsync -az --delete $RUNNER_TEMP/promo-out/ <user>@195.201.99.206:`
+   (note the **empty** path after the colon — the `command=`-restricted
+   SSH wrapper pins the destination to `/var/www/promo-tool`. Modern
+   Python rrsync rejects an explicit `./` as unsafe with
+   `rrsync error: unsafe arg: ./`, so the workflow sends nothing.)
 
 Verify from a separate machine:
 
@@ -257,7 +288,8 @@ ssh maintainer@195.201.99.206 'sudo tail -n 50 /var/log/caddy/promo-tool.log'
 ```bash
 caddy hash-password --plaintext '<their-new-password>'
 sudo $EDITOR /etc/caddy/Caddyfile
-#   add:    newfriend  $2a$14$<their-bcrypt-hash>
+#   inside the basicauth { } block, add a line:
+#     newfriend  $2a$14$<their-bcrypt-hash>
 sudo caddy validate --config /etc/caddy/Caddyfile
 sudo systemctl reload caddy
 ```
@@ -268,7 +300,7 @@ DM them: `https://newfriend:<password>@promo-tool.195-201-99-206.sslip.io`.
 
 ```bash
 sudo $EDITOR /etc/caddy/Caddyfile
-#   delete the friend's line inside basic_auth { }
+#   delete the friend's line inside basicauth { }
 sudo systemctl reload caddy
 ```
 
@@ -321,7 +353,9 @@ friend needs to re-install the unpacked extension. Plan accordingly.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `curl ... → 401` even with `-u user:pass` | typo in password OR wrong bcrypt hash in Caddyfile | regenerate hash with `caddy hash-password`, update Caddyfile, reload |
+| `curl ... → 401` even with `-u user:pass` | typo in password OR wrong bcrypt hash in Caddyfile (bcrypt is one-way; if plaintext is lost it must be regenerated) | regenerate hash with `caddy hash-password`, replace the line in the `basicauth` block, reload |
+| `caddy validate → "illegal base64 data at input byte 2"` | Caddyfile uses the newer `basic_auth` directive (expects base64-encoded passwords), but the value is raw `$2a$14$...` bcrypt | rename the directive to `basicauth` (no underscore), which accepts raw bcrypt directly |
+| `systemctl reload caddy` hangs ~90s then errors `permission denied` on a `/var/log/caddy/*.log` path | caddy's sandboxed systemd unit cannot write files under `/var/log/caddy/` on this host | remove the `log { output file ... }` block from the site stanza; rely on `journalctl -u caddy` instead. After: `sudo systemctl restart caddy` to clear the wedged `reloading` state |
 | Actions run fails on the rsync step with "Permission denied (publickey)" | `VPS_DEPLOY_KEY` secret missing/corrupt OR public key not in `~deploy/.ssh/authorized_keys` | re-paste both halves; verify file perms (700 on `.ssh`, 600 on `authorized_keys`) |
 | Actions run fails with "Host key verification failed" | `VPS_KNOWN_HOSTS` secret stale (VPS reinstalled, fingerprint rotated) | `ssh-keyscan -t ed25519 195.201.99.206` and overwrite the secret |
 | Actions run succeeds but `/var/www/promo-tool` empty | `command=` restriction or `rrsync` arguments wrong; the workflow's rsync flags don't match what rrsync allows | `gh run view <id> --log` and look at the rsync error; the rrsync man page lists the allowed flags |
