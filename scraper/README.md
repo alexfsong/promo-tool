@@ -3,8 +3,9 @@
 Pulls public odds feeds (Pinnacle + Action Network), normalizes to The-Odds-API
 event shape, writes static JSON for the client to consume.
 
-**Deploying for real?** Read [DEPLOY.md](./DEPLOY.md) for the end-to-end VPS
-walkthrough (caddy site block, automatic TLS, per-friend HTTP Basic Auth, cron).
+**Deploying for real?** Read [DEPLOY.md](./DEPLOY.md) for the end-to-end ops
+walkthrough (GitHub Actions runs the scraper, caddy on the VPS serves the
+result, automatic TLS, per-friend HTTP Basic Auth).
 
 **The feed is served behind HTTP Basic Auth** (spec 005 FR-013). The client's
 `vpsFeed` provider extracts `user:pass@` from the stored URL and sends an
@@ -31,29 +32,48 @@ $OUT_DIR/
     basketball_nba.json
     baseball_mlb.json
     icehockey_nhl.json
+    soccer_epl.json
+    soccer_uefa_champs_league.json
+    tennis_atp_wta.json
+    mma_mixed_martial_arts.json
 ```
 
 Each `odds/*.json` is a JSON array of events shaped like The-Odds-API's
 `/sports/{key}/odds?oddsFormat=american&markets=h2h,spreads,totals` response.
 The client (`src/api/providers/vpsFeed.js`) consumes it directly.
 
-## VPS deploy
+## Deploy architecture
 
-Repo lives at `/opt/promo-tool`. caddy serves
-`/var/www/promo-tool/` as a static directory at
-`https://promo-tool.195-201-99-206.sslip.io/` (see [DEPLOY.md](./DEPLOY.md)
-for the full site block + per-friend basic_auth setup).
+The scraper runs on **GitHub Actions** (`.github/workflows/scraper.yml`),
+not on the VPS. Pinnacle's Cloudflare WAF hard-blocks the VPS's Hetzner
+IP range (see `specs/005-vps-feed-cutover/research.md` R9), so the VPS
+is reduced to a static host: caddy + a `deploy` user that owns
+`/var/www/promo-tool/`. The workflow rsyncs scraper output to that
+directory over a `command=`-restricted SSH key on a schedule.
 
-```bash
-# one-time
-git clone <repo> /opt/promo-tool
-
-# cron — every 10 minutes
-*/10 * * * * cd /opt/promo-tool/scraper && OUT_DIR=/var/www/promo-tool node run.js >> /var/log/promo-scraper.log 2>&1
+```
+GitHub Actions (free, public repo)         VPS @ 195.201.99.206
+─────────────────────────                  ──────────────────────
+  schedule: every 10 min                     /var/www/promo-tool/
+  node scraper/run.js   ──── rsync ─────►     ├── sports.json
+  → $RUNNER_TEMP/promo-out  (SSH+rrsync)      └── odds/*.json
+                                                    │
+                                                    ▼
+                                             caddy (basicauth + TLS)
+                                                    │
+                                                    ▼
+                                       https://promo-tool.195-201-99-206.sslip.io
 ```
 
-Each friend pastes `https://<user>:<pass>@promo-tool.195-201-99-206.sslip.io`
-into the extension Settings.
+Friends paste `https://<user>:<pass>@promo-tool.195-201-99-206.sslip.io`
+into the extension Settings. See [DEPLOY.md](./DEPLOY.md) for the full
+setup walkthrough and ops runbook (rotating keys, adding/revoking
+friends, troubleshooting).
+
+**Known limitation**: GitHub's free-tier scheduler drifts heavily for
+`*/10` cron — observed cadence ≈ hourly with occasional skips on
+low-activity repos. The feed is a heuristic, not a real-time source;
+re-check odds at the books before placing the bet.
 
 ## Sources
 

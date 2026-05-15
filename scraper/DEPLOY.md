@@ -274,14 +274,68 @@ ssh maintainer@195.201.99.206 \
   'stat -c "%y %n" /var/www/promo-tool/sports.json /var/www/promo-tool/odds/*.json'
 ```
 
-Every mtime should be within the last ~15 minutes (allowing for GitHub
-Actions scheduler drift).
+**Known limitation — GitHub free-tier scheduler drift.** The workflow
+requests `*/10 * * * *` but on free-tier public-repo runners, GitHub
+deprioritizes scheduled workflows in low-activity repos. Observed
+cadence on this repo has been **hourly with occasional skipped slots**,
+not every 10 minutes. The 15-minute mtime budget above is an
+*aspiration*, not a guarantee. Friends are expected to cross-check odds
+at bet-placement time anyway; the feed is a heuristic, not a source of
+truth. Mitigations if it ever matters: (a) keep the repo active (any
+push refreshes the priority), (b) pay for Actions credits, (c) move to
+a self-hosted runner, or (d) fall back to laptop-driven rsync. Tracked
+as gotcha [68].
 
 caddy access log (in case auth/cache misconfig surfaces):
 
 ```bash
-ssh maintainer@195.201.99.206 'sudo tail -n 50 /var/log/caddy/promo-tool.log'
+sudo journalctl -u caddy --since '15 minutes ago' | grep promo-tool
 ```
+
+(File logging at `/var/log/caddy/*.log` is intentionally disabled on
+this host — the systemd sandbox blocks file writes there. The journal
+captures the same lines.)
+
+### TLS expiry
+
+caddy auto-renews Let's Encrypt certs ~30 days before expiry. To verify
+the current expiry from any machine:
+
+```bash
+echo | openssl s_client -servername promo-tool.195-201-99-206.sslip.io \
+  -connect promo-tool.195-201-99-206.sslip.io:443 2>/dev/null | \
+  openssl x509 -noout -dates
+```
+
+If the cert is within 14 days of expiry and caddy hasn't renewed, watch
+the journal for ACME errors:
+
+```bash
+sudo journalctl -u caddy --since '24 hours ago' | grep -iE 'acme|tls|cert'
+```
+
+Common cause: outbound 80/443 to `acme-v02.api.letsencrypt.org` blocked
+(firewall change on the VPS). Fix the egress, then `sudo systemctl
+reload caddy` to retry immediately.
+
+### Disk usage / disk-full failure mode
+
+`/var/www/promo-tool` is small (<5 MB per snapshot), so a sustained
+disk-full failure is unlikely to come from feed JSON. The risk is
+**other tenants on the VPS** filling the partition; rsync then writes
+partial files or fails outright, and caddy serves stale JSON.
+
+Check disk + the feed dir size:
+
+```bash
+df -h /var/www/promo-tool
+du -sh /var/www/promo-tool
+```
+
+If the partition is >90% full, rotate logs / clear caches on the noisy
+tenant before the next scraper run lands. If rsync silently truncated a
+file mid-write, the easiest fix is `gh workflow run scraper.yml` after
+the disk pressure clears.
 
 ## Adding a friend
 
@@ -361,10 +415,12 @@ friend needs to re-install the unpacked extension. Plan accordingly.
 | Actions run succeeds but `/var/www/promo-tool` empty | `command=` restriction or `rrsync` arguments wrong; the workflow's rsync flags don't match what rrsync allows | `gh run view <id> --log` and look at the rsync error; the rrsync man page lists the allowed flags |
 | `curl ... → 404 sports.json` | workflow hasn't run yet, or rsync wrote into the wrong directory | check `ls -la /var/www/promo-tool/` and `gh run list -w scraper.yml` |
 | `curl ... → 403` | caddy can't read the file — perms wrong | `sudo chown -R deploy:caddy /var/www/promo-tool && sudo chmod -R 750 /var/www/promo-tool` |
-| `gh run list` shows scheduled runs missing | GitHub's scheduled-workflow scheduler skipping under load — known behavior | manually `gh workflow run scraper.yml` to catch up; SC-005 budget allows ≤5% miss rate |
+| `gh run list` shows scheduled runs missing | GitHub free-tier scheduler deprioritizes low-activity repos — observed cadence is ~hourly with skips, NOT every 10 min (gotcha [68]) | manually `gh workflow run scraper.yml` to catch up; accept as a heuristic-quality feed, not a real-time one |
 | All `odds/*.json` are stale (mtime > 30 min) and Actions tab is silent | workflow disabled (auto-disables after 60 days of repo inactivity for scheduled workflows) | re-enable in the Actions tab; `gh workflow enable scraper.yml` |
 | Pinnacle source 403 in the Actions log | Cloudflare WAF rotated to block Azure IPs too | re-run `pinnacle-probe.yml` from a fresh runner; if confirmed, swap to laptop-rsync as a temporary fallback (see specs/005-vps-feed-cutover/research.md R9 alternatives) |
 | One source consistently errors in log | Pinnacle key rotated OR Action Network book_id rotated | patch `scraper/sources/<src>.js`, push |
+| TLS cert is past expiry in browser warning | caddy didn't auto-renew (egress to Let's Encrypt blocked, or caddy wedged) | check `journalctl -u caddy --since '24 hours ago' \| grep -iE 'acme\|cert'`, fix egress, `sudo systemctl reload caddy` |
+| rsync step succeeds but files truncated/zero-byte | VPS partition full; another tenant filled the disk mid-write | `df -h /var/www/promo-tool`, free space on the host, then re-run the workflow once disk pressure clears |
 
 ## Cost / capacity check
 

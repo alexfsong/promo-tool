@@ -63,3 +63,30 @@ test('normalizeFeedUrl: idempotent on already-normalized input', () => {
   const r2 = normalizeFeedUrl(r1.baseUrl);
   assert.equal(r1.baseUrl, r2.baseUrl);
 });
+
+// T036 parity — both providers expose distinct credential copy so the
+// provider.js comment-toggle automatically swaps the Settings UI strings
+// without any popup.html / popup.js edit (FR-006).
+test('US5 parity: vpsFeed credential copy is feed-URL flavored', async () => {
+  const vps = await import('../src/api/providers/vpsFeed.js');
+  assert.equal(vps.credentialLabel, 'Feed URL');
+  assert.ok(/promo-tool\..*sslip\.io/i.test(vps.credentialPlaceholder), 'placeholder names the feed host');
+  assert.ok(!/the-odds-api/i.test(vps.credentialHint), 'hint must not mention the-odds-api.com');
+});
+
+test('US5 parity: theOddsApi credential copy is API-key flavored', async () => {
+  const oa = await import('../src/api/providers/theOddsApi.js');
+  assert.equal(oa.credentialLabel, 'The Odds API key');
+  assert.ok(/api key/i.test(oa.credentialPlaceholder) || /paste/i.test(oa.credentialPlaceholder));
+  assert.ok(/the-odds-api/i.test(oa.credentialHint), 'hint should reference the-odds-api.com');
+});
+
+test('US5 parity: active provider.js re-exports the credential copy verbatim', async () => {
+  const provider = await import('../src/api/provider.js');
+  const vps = await import('../src/api/providers/vpsFeed.js');
+  // provider.js currently points at vpsFeed; if/when comment-toggled to
+  // theOddsApi, this test should be flipped to compare against that module.
+  assert.equal(provider.credentialLabel, vps.credentialLabel);
+  assert.equal(provider.credentialPlaceholder, vps.credentialPlaceholder);
+  assert.equal(provider.credentialHint, vps.credentialHint);
+});
