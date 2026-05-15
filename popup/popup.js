@@ -457,6 +457,8 @@ function recommend(promoTypeId, inputs, events, userBooks) {
 }
 
 function renderEmptyState(kind) {
+  bpStatus.textContent = '';
+  bpStatus.classList.add('hidden');
   bpCard.classList.remove('hidden');
   if (kind === EMPTY_STATE_NEED_BOOKS) {
     bpCard.innerHTML = `<div class="bp-empty">
@@ -479,6 +481,8 @@ function renderEmptyState(kind) {
 }
 
 function renderBestPlayCard(play, promoTypeId) {
+  bpStatus.textContent = '';
+  bpStatus.classList.add('hidden');
   const isAdvancedHeadline = play.headline.kind === 'netEV';
   const headlineLabel = isAdvancedHeadline ? 'Net EV (Advanced)' : 'Guaranteed locked';
   const headlineAmount = isAdvancedHeadline
