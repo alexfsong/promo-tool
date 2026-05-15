@@ -568,6 +568,57 @@ select:focus { border-color: var(--blue); }
   line-height: 1.6;
 }
 
+.bp-alts {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-top: 6px;
+}
+.bp-alts summary {
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+  user-select: none;
+}
+.bp-alts summary:hover { color: var(--text); }
+.bp-alts-blurb {
+  padding: 4px 12px 6px;
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+}
+.bp-alts-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.bp-alt-row {
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.bp-alt-event {
+  font-weight: 600;
+  color: var(--text);
+}
+.bp-alt-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  color: var(--muted);
+  margin: 2px 0;
+}
+.bp-alt-arrow {
+  color: var(--muted);
+  opacity: 0.6;
+}
+.bp-alt-locked {
+  font-weight: 600;
+  color: var(--accent, #16a34a);
+}
+
 .bp-empty {
   background: var(--surface);
   border: 1px solid var(--border);

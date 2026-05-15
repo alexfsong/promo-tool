@@ -480,6 +480,26 @@ function renderEmptyState(kind) {
   });
 }
 
+function renderAltPlaysSection(title, blurb, plays) {
+  if (!Array.isArray(plays) || !plays.length) return '';
+  const rows = plays.map(p => `
+    <li class="bp-alt-row">
+      <div class="bp-alt-event">${p.event.away} @ ${p.event.home}</div>
+      <div class="bp-alt-line">
+        <span><strong>${p.evSelection}</strong> ${fmtAmerican(p.evOdds)} @ ${p.evBook}</span>
+        <span class="bp-alt-arrow">→ hedge</span>
+        <span><strong>${p.hedgeLeg.selection}</strong> ${fmtAmerican(p.hedgeLeg.odds)} @ ${p.hedgeLeg.book} (${fmt(p.hedgeLeg.cashStake)})</span>
+      </div>
+      <div class="bp-alt-locked">Locked ${fmt(p.lockedCash)}</div>
+    </li>`).join('');
+  return `
+    <details class="bp-alts">
+      <summary>${title} (${plays.length})</summary>
+      <div class="bp-alts-blurb">${blurb}</div>
+      <ul class="bp-alts-list">${rows}</ul>
+    </details>`;
+}
+
 function renderBestPlayCard(play, promoTypeId) {
   bpStatus.textContent = '';
   bpStatus.classList.add('hidden');
@@ -533,6 +553,17 @@ function renderBestPlayCard(play, promoTypeId) {
       </div>`;
   }
 
+  const otherPlaysHtml = renderAltPlaysSection(
+    'Other plays',
+    'Top alternates in your odds range. Useful when the feed snapshot is stale or a book disagrees.',
+    play.otherPlays,
+  );
+  const nearMissesHtml = renderAltPlaysSection(
+    'Near-miss plays',
+    'Positive-locked plays just outside your odds range. Widen the range to make these primary.',
+    play.nearMisses,
+  );
+
   bpCard.classList.remove('hidden');
   bpCard.innerHTML = `
     <div class="bp-card${isAdvancedHeadline ? ' advanced-headline' : ''}">
@@ -543,6 +574,8 @@ function renderBestPlayCard(play, promoTypeId) {
       ${evLegHtml}
       ${hedgeHtml}
       ${stage2Html}
+      ${otherPlaysHtml}
+      ${nearMissesHtml}
       <details class="bp-details">
         <summary>Show details</summary>
         <div class="bp-details-body">${play.showDetails.formulaLine}</div>

@@ -40,15 +40,12 @@ function round2(n) {
   return Math.round(n * 100) / 100;
 }
 
-// Iterate provider events and find the single best (book + outcome + hedge) that
-// converts `bonusAmount` to the highest locked cash inside [minOdds, maxOdds].
-// Extracted from popup.js scanner (research.md R3). Pure: no DOM, no chrome.*.
-export function recommendHedge({ events, bonusAmount, minOdds, maxOdds, userBooks }) {
-  if (!Array.isArray(events) || !events.length) return null;
+// Collect all cross-book hedge candidates inside [minOdds, maxOdds]. Pure helper.
+function collectHedgeCandidates({ events, bonusAmount, minOdds, maxOdds, userBooks }) {
+  if (!Array.isArray(events) || !events.length) return [];
   if (!Array.isArray(userBooks)) userBooks = [];
-
   const myBooks = new Set(userBooks);
-  let best = null;
+  const plays = [];
 
   for (const event of events) {
     for (const bm of event.bookmakers || []) {
@@ -87,24 +84,88 @@ export function recommendHedge({ events, bonusAmount, minOdds, maxOdds, userBook
         });
         if (!hedge || hedge.lockedValue <= 0) continue;
 
-        if (!best || hedge.lockedValue > best.lockedCash) {
-          best = {
-            event: { home: event.home_team, away: event.away_team, commenceTime: event.commence_time },
-            evBook: bm.title,
-            evSelection: outcome.name,
-            evOdds: backOdds,
-            hedgeBook: bestLayBook,
-            hedgeSelection: oppOutcome.name,
-            hedgeOdds: bestLayOdds,
-            hedgeStake: round2(hedge.hedgeStake),
-            lockedCash: round2(hedge.lockedValue),
-          };
-        }
+        plays.push({
+          event: { home: event.home_team, away: event.away_team, commenceTime: event.commence_time },
+          evBook: bm.title,
+          evSelection: outcome.name,
+          evOdds: backOdds,
+          hedgeBook: bestLayBook,
+          hedgeSelection: oppOutcome.name,
+          hedgeOdds: bestLayOdds,
+          hedgeStake: round2(hedge.hedgeStake),
+          lockedCash: round2(hedge.lockedValue),
+        });
       }
     }
   }
+  return plays;
+}
 
-  return best;
+function uniqueByKey(plays, keyFn) {
+  const seen = new Set();
+  const out = [];
+  for (const p of plays) {
+    const k = keyFn(p);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(p);
+  }
+  return out;
+}
+
+const playKey = p => `${p.event.home}|${p.event.away}|${p.evBook}|${p.evSelection}|${p.hedgeBook}`;
+
+// Iterate provider events and find the single best (book + outcome + hedge) that
+// converts `bonusAmount` to the highest locked cash inside [minOdds, maxOdds].
+// Extracted from popup.js scanner (research.md R3). Pure: no DOM, no chrome.*.
+export function recommendHedge({ events, bonusAmount, minOdds, maxOdds, userBooks }) {
+  const plays = collectHedgeCandidates({ events, bonusAmount, minOdds, maxOdds, userBooks });
+  if (!plays.length) return null;
+  return plays.reduce((b, p) => (!b || p.lockedCash > b.lockedCash ? p : b), null);
+}
+
+// Return up to `limit` plays inside [minOdds, maxOdds], sorted by lockedCash desc.
+// First element is the same play recommendHedge returns. Powers the "other plays"
+// fallback below the Best Play card when the cron-fed snapshot may be stale.
+export function recommendHedgeRanked({ events, bonusAmount, minOdds, maxOdds, userBooks, limit = 5 }) {
+  const plays = collectHedgeCandidates({ events, bonusAmount, minOdds, maxOdds, userBooks });
+  plays.sort((a, b) => b.lockedCash - a.lockedCash);
+  return uniqueByKey(plays, playKey).slice(0, Math.max(0, limit));
+}
+
+// Plays whose backOdds fall *outside* [minOdds, maxOdds] but inside a widening
+// band of `band` American points on either side. Lets users see near-miss
+// alternatives without re-typing the range. Sorted desc by lockedCash.
+export function recommendHedgeNearMisses({ events, bonusAmount, minOdds, maxOdds, userBooks, band = 200, limit = 5 }) {
+  if (!Number.isFinite(band) || band <= 0) return [];
+  const lower = collectHedgeCandidates({
+    events, bonusAmount, userBooks,
+    minOdds: minOdds - band,
+    maxOdds: minOdds - 1,
+  });
+  const upper = collectHedgeCandidates({
+    events, bonusAmount, userBooks,
+    minOdds: maxOdds + 1,
+    maxOdds: maxOdds + band,
+  });
+  const combined = [...lower, ...upper].sort((a, b) => b.lockedCash - a.lockedCash);
+  return uniqueByKey(combined, playKey).slice(0, Math.max(0, limit));
+}
+
+function bestPlayFromCandidate(p) {
+  return {
+    event: p.event,
+    evBook: p.evBook,
+    evSelection: p.evSelection,
+    evOdds: p.evOdds,
+    hedgeLeg: {
+      book: p.hedgeBook,
+      selection: p.hedgeSelection,
+      odds: p.hedgeOdds,
+      cashStake: p.hedgeStake,
+    },
+    lockedCash: p.lockedCash,
+  };
 }
 
 // --- Bonus Bet ---
@@ -114,8 +175,10 @@ export function recommendBonusBet(inputs, providerEvents, userBooks) {
   const [minOdds, maxOdds] = inputs?.targetOddsRange ?? [300, 500];
   if (!Number.isFinite(bonusAmount) || bonusAmount <= 0) return null;
 
-  const best = recommendHedge({ events: providerEvents, bonusAmount, minOdds, maxOdds, userBooks });
-  if (!best) return EMPTY_STATE_NO_PLAY;
+  const ranked = recommendHedgeRanked({ events: providerEvents, bonusAmount, minOdds, maxOdds, userBooks, limit: 5 });
+  if (!ranked.length) return EMPTY_STATE_NO_PLAY;
+  const best = ranked[0];
+  const nearMisses = recommendHedgeNearMisses({ events: providerEvents, bonusAmount, minOdds, maxOdds, userBooks, limit: 5 });
 
   return {
     headline: { kind: 'lockedCash', amount: best.lockedCash },
@@ -136,6 +199,8 @@ export function recommendBonusBet(inputs, providerEvents, userBooks) {
       odds: best.hedgeOdds,
       cashStake: best.hedgeStake,
     }],
+    otherPlays: ranked.slice(1).map(bestPlayFromCandidate),
+    nearMisses: nearMisses.map(bestPlayFromCandidate),
     showDetails: {
       formulaLine: `Hedge stake = $${bonusAmount} × (B − 1) / L where B = ${best.evOdds > 0 ? '+' : ''}${best.evOdds} (decimal ${americanToDecimal(best.evOdds).toFixed(3)}) and L = ${best.hedgeOdds > 0 ? '+' : ''}${best.hedgeOdds} (decimal ${americanToDecimal(best.hedgeOdds).toFixed(3)}). Locked cash = hedge × (L − 1).`,
     },
@@ -163,14 +228,21 @@ export function recommendRiskFree(inputs, providerEvents, userBooks) {
   // For the "if you lose" branch we project a bonus-bet conversion against
   // current market odds. Use the bonus-bet recommender to surface a concrete
   // hedge pair to run after the refund credits.
-  const deferred = recommendHedge({
+  const deferredRanked = recommendHedgeRanked({
     events: providerEvents,
     bonusAmount: refund,
     minOdds: 300,
     maxOdds: 500,
     userBooks,
+    limit: 5,
   });
-  if (!deferred) return EMPTY_STATE_NO_PLAY;
+  if (!deferredRanked.length) return EMPTY_STATE_NO_PLAY;
+  const deferred = deferredRanked[0];
+  const deferredNearMisses = recommendHedgeNearMisses({
+    events: providerEvents,
+    bonusAmount: refund,
+    minOdds: 300, maxOdds: 500, userBooks, limit: 5,
+  });
 
   const ev = riskFreeEV({ stake, decimal, refund, conversionRate });
   return {
@@ -192,6 +264,8 @@ export function recommendRiskFree(inputs, providerEvents, userBooks) {
       odds: deferred.hedgeOdds,
       cashStake: deferred.hedgeStake,
     }],
+    otherPlays: deferredRanked.slice(1).map(bestPlayFromCandidate),
+    nearMisses: deferredNearMisses.map(bestPlayFromCandidate),
     showDetails: {
       formulaLine: `If first bet loses, $${refund} refund converts at ${(conversionRate * 100).toFixed(0)}% via the deferred bonus-bet plan above.`,
       ev: ev?.ev ?? undefined,
@@ -261,14 +335,21 @@ export function recommendBetAndGet(inputs, providerEvents, userBooks) {
   if (!Number.isFinite(qualifyingStake) || qualifyingStake <= 0) return null;
   if (!Number.isFinite(bonusAmount) || bonusAmount <= 0) return null;
 
-  const qualifyingPlay = recommendHedge({
+  const qualifyingRanked = recommendHedgeRanked({
     events: providerEvents,
     bonusAmount: qualifyingStake,
     minOdds: -300,
     maxOdds: 500,
     userBooks,
+    limit: 5,
   });
-  if (!qualifyingPlay) return EMPTY_STATE_NO_PLAY;
+  if (!qualifyingRanked.length) return EMPTY_STATE_NO_PLAY;
+  const qualifyingPlay = qualifyingRanked[0];
+  const qualifyingNearMisses = recommendHedgeNearMisses({
+    events: providerEvents,
+    bonusAmount: qualifyingStake,
+    minOdds: -300, maxOdds: 500, userBooks, limit: 5,
+  });
 
   const deferredBonusPlay = recommendHedge({
     events: providerEvents,
@@ -307,6 +388,8 @@ export function recommendBetAndGet(inputs, providerEvents, userBooks) {
         odds: qualifyingPlay.hedgeOdds,
         cashStake: round2(plan.stage1.hedgeStake),
       }],
+      otherPlays: qualifyingRanked.slice(1).map(bestPlayFromCandidate),
+      nearMisses: qualifyingNearMisses.map(bestPlayFromCandidate),
       showDetails: {
         formulaLine: `Stage 1 hedge locks $${plan.stage1.lockedValue.toFixed(2)} now. Stage 2 (if qualifying wins): bonus bet converts via deferred plan, adding ~$${plan.stage2.cashIfBonusCredits.toFixed(2)}. Worst case (qualifying loses, no bonus credit): $${plan.worstCaseLockedCash.toFixed(2)}.`,
       },
@@ -343,6 +426,8 @@ export function recommendBetAndGet(inputs, providerEvents, userBooks) {
       stakeKind: 'cash',
     },
     hedgeLegs: [],
+    otherPlays: qualifyingRanked.slice(1).map(bestPlayFromCandidate),
+    nearMisses: qualifyingNearMisses.map(bestPlayFromCandidate),
     showDetails: {
       formulaLine: `Advanced: place qualifying $${qualifyingStake} unhedged at +EV. If it wins, hedge the bonus per stage 2. Net EV = p_win × (payout + L2) − (1 − p_win) × stake = $${plan.netEV.toFixed(2)}.`,
       ev: plan.netEV,
