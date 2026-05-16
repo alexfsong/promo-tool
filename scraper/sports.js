@@ -43,7 +43,7 @@ export const SPORTS = [
     title: 'English Premier League',
     group: 'Soccer',
     pinnacle: { sportId: 29, leagueIds: [1980] },
-    actionNetwork: { path: 'soccer/epl' },
+    actionNetwork: { path: 'epl' },
   },
   {
     key: 'soccer_uefa_champs_league',
@@ -64,7 +64,7 @@ export const SPORTS = [
     title: 'MMA (UFC)',
     group: 'MMA',
     pinnacle: { sportId: 22, leagueIds: [1582] },
-    actionNetwork: { path: 'mma' },
+    actionNetwork: { path: 'ufc', shape: 'competitions' },
   },
 ];
 
