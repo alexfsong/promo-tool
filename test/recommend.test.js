@@ -275,9 +275,12 @@ test('recommendBonusBet: otherPlays + nearMisses are [] when nothing else fits',
   const events = [{
     id: 'lone',
     home_team: 'X', away_team: 'Y', commence_time: '2026-05-15T19:00:00Z',
+    // Back DK X +400 is the lone candidate in [300,500]; FD X +90 is below
+    // the near-miss floor (100); FD Y -370 hedges DK X +400 with implied
+    // sum 0.987 (passes spec 006 FR-001 false-arb floor).
     bookmakers: [
       { title: 'DK', markets: [{ key: 'h2h', outcomes: [{ name: 'X', price: 400 }, { name: 'Y', price: -1500 }] }] },
-      { title: 'FD', markets: [{ key: 'h2h', outcomes: [{ name: 'X', price: -2000 }, { name: 'Y', price: 800 }] }] },
+      { title: 'FD', markets: [{ key: 'h2h', outcomes: [{ name: 'X', price: 90 }, { name: 'Y', price: -370 }] }] },
     ],
   }];
   const out = recommendBonusBet(
@@ -336,4 +339,161 @@ test('recommendBetAndGet: advanced mode → netEV headline (FR-016 invariant)', 
     ['DraftKings', 'FanDuel'],
   );
   assert.equal(out.headline.kind, 'netEV');
+});
+
+// --- Spec 006: honest best play ---
+
+test('spec 006 FR-001: false-arb (implied prob sum < 0.98) is filtered out', () => {
+  // Both possible cross-book pairs sum to far below 0.98 — pure false arbs
+  // from stale snapshots. Without the filter, both would surface as
+  // implausibly high "locked" conversions. With it, no play survives.
+  // DK A +500 + FD B +600 → 1/6 + 1/7 = 0.31. FD A +600 + DK B +500 → same.
+  const events = [{
+    id: 'arb', home_team: 'A', away_team: 'B', commence_time: '2026-05-15T19:00:00Z',
+    bookmakers: [
+      { title: 'DraftKings', markets: [{ key: 'h2h', outcomes: [
+        { name: 'A', price: 500 }, { name: 'B', price: -800 },
+      ] }] },
+      { title: 'FanDuel', markets: [{ key: 'h2h', outcomes: [
+        { name: 'A', price: -800 }, { name: 'B', price: 600 },
+      ] }] },
+    ],
+  }];
+  const out = recommendBonusBet(
+    { bonusAmount: 100, targetOddsRange: [300, 700] },
+    events,
+    ['DraftKings', 'FanDuel'],
+  );
+  assert.equal(out, EMPTY_STATE_NO_PLAY,
+    'false-arb pair must not surface; no other valid play exists in this fixture');
+});
+
+test('spec 006 FR-001: realistic pair (implied prob sum ≥ 0.98) still passes', () => {
+  // Back +400 (B=5, 1/B=0.20) + lay -450 (L=1.222, 1/L=0.818) → sum 1.018,
+  // a normal-vig market. Locked = $150 × (5−1) × (1.222−1)/1.222 ≈ $109.
+  const events = [{
+    id: 'real', home_team: 'A', away_team: 'B', commence_time: '2026-05-15T19:00:00Z',
+    bookmakers: [
+      { title: 'DraftKings', markets: [{ key: 'h2h', outcomes: [
+        { name: 'A', price: 400 }, { name: 'B', price: -500 },
+      ] }] },
+      { title: 'FanDuel', markets: [{ key: 'h2h', outcomes: [
+        { name: 'A', price: 380 }, { name: 'B', price: -450 },
+      ] }] },
+    ],
+  }];
+  const out = recommendBonusBet(
+    { bonusAmount: 150, targetOddsRange: [300, 500] },
+    events,
+    ['DraftKings', 'FanDuel'],
+  );
+  assert.notEqual(out, EMPTY_STATE_NO_PLAY);
+  assert.equal(out.headline.kind, 'lockedCash');
+  assert.ok(out.headline.amount > 90 && out.headline.amount < 115,
+    `expected ~$109 locked, got $${out.headline.amount}`);
+  assert.ok(out.headline.amount / 150 <= 1.0,
+    'conversion must not exceed 100% post-filter');
+});
+
+test('spec 006 FR-002: Pinnacle-anchored lay picks closest cohort book, not max', () => {
+  // Pinnacle anchors lay outcome B at -200 (decimal 1.5, implied 0.667).
+  // Two cohort lay candidates for B: DK at -110 (1.909, implied 0.524) and
+  // FD at -180 (1.556, implied 0.643). FD is closer to Pinnacle. Without
+  // FR-002, the max-lay pick would be DK -110 (higher decimal = "better" lay
+  // odds), but that's the stale/mispriced outlier.
+  // Back leg is BetMGM A +180 (B=2.8). Implied sums: BM+180 (1/2.8=0.357) +
+  // DK -110 (0.524) = 0.881 → fails FR-001. So we need a back leg that pairs
+  // with both DK and FD legitimately.
+  // Use back BetMGM A +160 (B=2.6, 1/B=0.385):
+  //   + DK B -110 (1/L=0.524) → sum 0.909, FAILS 0.98 floor (gets filtered).
+  // To exercise FR-002 cleanly we need BOTH cohort lays to pass FR-001.
+  // Use back BetMGM A +200 (B=3, 1/B=0.333):
+  //   + DK B -250 (1/L=0.714) → sum 1.048 PASS
+  //   + FD B -180 (1/L=0.643) → sum 0.976 → just below 0.98 — adjust.
+  // Use FD B -200 (1/L=0.667). Then FD sum = 1.000 PASS. DK B -250 sum = 1.048.
+  // Pinnacle anchor at B -200 (implied 0.667). FD is exactly on Pinnacle;
+  // DK at -250 (implied 0.714) is 0.047 above. FD wins.
+  const events = [{
+    id: 'pin-anchor', home_team: 'A', away_team: 'B', commence_time: '2026-05-15T19:00:00Z',
+    bookmakers: [
+      { title: 'Pinnacle', markets: [{ key: 'h2h', outcomes: [
+        { name: 'A', price: 175 }, { name: 'B', price: -200 },
+      ] }] },
+      { title: 'BetMGM', markets: [{ key: 'h2h', outcomes: [
+        { name: 'A', price: 200 }, { name: 'B', price: -240 },
+      ] }] },
+      { title: 'DraftKings', markets: [{ key: 'h2h', outcomes: [
+        { name: 'A', price: 180 }, { name: 'B', price: -250 },
+      ] }] },
+      { title: 'FanDuel', markets: [{ key: 'h2h', outcomes: [
+        { name: 'A', price: 165 }, { name: 'B', price: -200 },
+      ] }] },
+    ],
+  }];
+  const out = recommendBonusBet(
+    { bonusAmount: 100, targetOddsRange: [150, 250] },
+    events,
+    ['BetMGM', 'DraftKings', 'FanDuel'],
+  );
+  assert.notEqual(out, EMPTY_STATE_NO_PLAY);
+  // The hedge book must be FanDuel (Pinnacle-closest), not DraftKings.
+  assert.equal(out.hedgeLegs[0].book, 'FanDuel',
+    'FR-002: lay should be cohort book closest to Pinnacle');
+});
+
+test('spec 006 FR-002: no Pinnacle → falls back to max-lay (post-filter)', () => {
+  // Same shape as previous but no Pinnacle. Without an anchor, max-lay wins.
+  // Back BetMGM A +200, two lay candidates: DK -250 (1/L=0.714, sum 1.048)
+  // and FD -200 (1/L=0.667, sum 1.000). Both pass FR-001. Max-lay is
+  // FD -200 (lower magnitude negative = higher decimal = "better" lay) →
+  // wait: -200 American = 1.5 decimal; -250 = 1.4 decimal. Max-decimal is
+  // -200 (FD). So FD is the max-lay pick. Verify.
+  const events = [{
+    id: 'no-pin', home_team: 'A', away_team: 'B', commence_time: '2026-05-15T19:00:00Z',
+    bookmakers: [
+      { title: 'BetMGM', markets: [{ key: 'h2h', outcomes: [
+        { name: 'A', price: 200 }, { name: 'B', price: -240 },
+      ] }] },
+      { title: 'DraftKings', markets: [{ key: 'h2h', outcomes: [
+        { name: 'A', price: 180 }, { name: 'B', price: -250 },
+      ] }] },
+      { title: 'FanDuel', markets: [{ key: 'h2h', outcomes: [
+        { name: 'A', price: 165 }, { name: 'B', price: -200 },
+      ] }] },
+    ],
+  }];
+  const out = recommendBonusBet(
+    { bonusAmount: 100, targetOddsRange: [150, 250] },
+    events,
+    ['BetMGM', 'DraftKings', 'FanDuel'],
+  );
+  assert.notEqual(out, EMPTY_STATE_NO_PLAY);
+  // Max-lay (highest decimal) is FD -200; FR-002 fallback should pick it.
+  assert.equal(out.hedgeLegs[0].book, 'FanDuel',
+    'FR-002 fallback: highest lay-decimal wins when Pinnacle absent');
+});
+
+test('spec 006 FR-004: Pinnacle never returned as evBook or hedgeBook', () => {
+  const events = [{
+    id: 'pin-only', home_team: 'A', away_team: 'B', commence_time: '2026-05-15T19:00:00Z',
+    bookmakers: [
+      { title: 'Pinnacle', markets: [{ key: 'h2h', outcomes: [
+        { name: 'A', price: 400 }, { name: 'B', price: -500 },
+      ] }] },
+      { title: 'DraftKings', markets: [{ key: 'h2h', outcomes: [
+        { name: 'A', price: 380 }, { name: 'B', price: -450 },
+      ] }] },
+      { title: 'FanDuel', markets: [{ key: 'h2h', outcomes: [
+        { name: 'A', price: 360 }, { name: 'B', price: -420 },
+      ] }] },
+    ],
+  }];
+  const out = recommendBonusBet(
+    { bonusAmount: 150, targetOddsRange: [300, 500] },
+    events,
+    ['DraftKings', 'FanDuel'], // Pinnacle NOT in userBooks
+  );
+  assert.notEqual(out, EMPTY_STATE_NO_PLAY);
+  assert.notEqual(out.evLeg.book, 'Pinnacle');
+  assert.notEqual(out.hedgeLegs[0].book, 'Pinnacle');
 });

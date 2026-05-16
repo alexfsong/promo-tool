@@ -40,6 +40,20 @@ function round2(n) {
   return Math.round(n * 100) / 100;
 }
 
+// Implied-prob floor — pairs below this are false arbs from stale snapshots
+// (spec 006 FR-001). 0.98 leaves 2pp headroom for sharp Pinnacle-grade markets.
+const FALSE_ARB_FLOOR = 0.98;
+
+// Find Pinnacle's lay decimal for `outcomeName` in `event` (spec 006 FR-002).
+// Returns null if Pinnacle isn't covering the event or doesn't expose h2h.
+function pinnacleLayDecimal(event, outcomeName) {
+  const pin = (event.bookmakers || []).find(b => b.title === 'Pinnacle');
+  if (!pin) return null;
+  const mkt = (pin.markets || []).find(m => m.key === 'h2h');
+  const opp = mkt?.outcomes.find(o => o.name === outcomeName);
+  return opp ? americanToDecimal(opp.price) : null;
+}
+
 // Collect all cross-book hedge candidates inside [minOdds, maxOdds]. Pure helper.
 function collectHedgeCandidates({ events, bonusAmount, minOdds, maxOdds, userBooks }) {
   if (!Array.isArray(events) || !events.length) return [];
@@ -61,8 +75,12 @@ function collectHedgeCandidates({ events, bonusAmount, minOdds, maxOdds, userBoo
         const oppOutcome = market.outcomes.find((_, idx) => idx !== i);
         if (!oppOutcome) continue;
 
-        let bestLayOdds = null;
-        let bestLayBook = null;
+        const backDecimal = americanToDecimal(backOdds);
+        const pinDec = pinnacleLayDecimal(event, oppOutcome.name);
+
+        // Filter cohort lay candidates by FR-001 (false-arb floor), then pick
+        // by FR-002 (closest to Pinnacle if present, else max-lay).
+        const candidates = [];
         for (const bm2 of event.bookmakers || []) {
           if (bm2.title === bm.title) continue;
           if (myBooks.size && !myBooks.has(bm2.title)) continue;
@@ -70,17 +88,32 @@ function collectHedgeCandidates({ events, bonusAmount, minOdds, maxOdds, userBoo
           if (!mkt2) continue;
           const opp = mkt2.outcomes.find(o => o.name === oppOutcome.name);
           if (!opp) continue;
-          if (bestLayOdds === null || opp.price > bestLayOdds) {
-            bestLayOdds = opp.price;
-            bestLayBook = bm2.title;
-          }
+          const layDecimal = americanToDecimal(opp.price);
+          if (1 / backDecimal + 1 / layDecimal < FALSE_ARB_FLOOR) continue;
+          candidates.push({ odds: opp.price, book: bm2.title, decimal: layDecimal });
         }
-        if (bestLayOdds === null) continue;
+        if (!candidates.length) continue;
+
+        // FR-005: deterministic tie-break by alphabetical book title.
+        candidates.sort((a, b) => a.book.localeCompare(b.book));
+        let pick;
+        if (pinDec !== null) {
+          const pinImplied = 1 / pinDec;
+          pick = candidates.reduce((best, c) => {
+            const d = Math.abs(1 / c.decimal - pinImplied);
+            const bd = Math.abs(1 / best.decimal - pinImplied);
+            return d < bd ? c : best;
+          }, candidates[0]);
+        } else {
+          pick = candidates.reduce((best, c) => (c.odds > best.odds ? c : best), candidates[0]);
+        }
+        const bestLayOdds = pick.odds;
+        const bestLayBook = pick.book;
 
         const hedge = bonusBetHedge({
           bonus: bonusAmount,
-          backDecimal: americanToDecimal(backOdds),
-          layDecimal: americanToDecimal(bestLayOdds),
+          backDecimal,
+          layDecimal: pick.decimal,
         });
         if (!hedge || hedge.lockedValue <= 0) continue;
 
