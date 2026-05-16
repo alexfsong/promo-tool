@@ -473,6 +473,61 @@ test('spec 006 FR-002: no Pinnacle → falls back to max-lay (post-filter)', () 
     'FR-002 fallback: highest lay-decimal wins when Pinnacle absent');
 });
 
+test('spec 006 FR-006: 3-outcome h2h (soccer with draw) is skipped', () => {
+  // A binary "h2h" on a 3-way market would tell the user they're locked
+  // when actually a draw zeroes both legs. Scraper now emits a Draw
+  // outcome for soccer; recommend.js's outcomes.length !== 2 guard skips.
+  const events = [{
+    id: 'soccer', home_team: 'Arsenal', away_team: 'Burnley', commence_time: '2026-05-18T19:00:00Z',
+    bookmakers: [
+      { title: 'DraftKings', markets: [{ key: 'h2h', outcomes: [
+        { name: 'Arsenal', price: 400 },
+        { name: 'Burnley', price: -500 },
+        { name: 'Draw', price: 320 },
+      ] }] },
+      { title: 'FanDuel', markets: [{ key: 'h2h', outcomes: [
+        { name: 'Arsenal', price: 380 },
+        { name: 'Burnley', price: -450 },
+        { name: 'Draw', price: 300 },
+      ] }] },
+    ],
+  }];
+  const out = recommendBonusBet(
+    { bonusAmount: 150, targetOddsRange: [300, 500] },
+    events,
+    ['DraftKings', 'FanDuel'],
+  );
+  assert.equal(out, EMPTY_STATE_NO_PLAY,
+    '3-way h2h must not surface — draw outcome would zero both legs');
+});
+
+test('spec 006 FR-006: missing draw price (price: null) still flags as 3-way', () => {
+  // Action Network omits the draw price for some books on soccer events.
+  // The scraper still emits the Draw outcome with price: null so the
+  // shape signals "non-binary" even when the price is absent.
+  const events = [{
+    id: 'soccer-no-draw-price', home_team: 'Liverpool', away_team: 'Chelsea', commence_time: '2026-05-18T19:00:00Z',
+    bookmakers: [
+      { title: 'DraftKings', markets: [{ key: 'h2h', outcomes: [
+        { name: 'Liverpool', price: 350 },
+        { name: 'Chelsea', price: -420 },
+        { name: 'Draw', price: null },
+      ] }] },
+      { title: 'FanDuel', markets: [{ key: 'h2h', outcomes: [
+        { name: 'Liverpool', price: 340 },
+        { name: 'Chelsea', price: -400 },
+        { name: 'Draw', price: null },
+      ] }] },
+    ],
+  }];
+  const out = recommendBonusBet(
+    { bonusAmount: 150, targetOddsRange: [300, 500] },
+    events,
+    ['DraftKings', 'FanDuel'],
+  );
+  assert.equal(out, EMPTY_STATE_NO_PLAY);
+});
+
 test('spec 006 FR-004: Pinnacle never returned as evBook or hedgeBook', () => {
   const events = [{
     id: 'pin-only', home_team: 'A', away_team: 'B', commence_time: '2026-05-15T19:00:00Z',

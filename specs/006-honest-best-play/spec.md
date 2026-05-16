@@ -52,6 +52,17 @@ When Pinnacle covers an event, its line is treated as the fair-value anchor. Amo
 - **FR-003** (no UI change): Both filters live in `src/promos/recommend.js`. No popup, content-script, manifest, or storage changes.
 - **FR-004** (Pinnacle never displayed as a venue): Pinnacle remains a reference-only source. The recommender MUST NOT return a Best Play whose `evBook` or `hedgeBook` is Pinnacle (Pinnacle is not in friends' cohort book set, and existing `userBooks` filter already enforces this — FR-004 makes the invariant explicit).
 - **FR-005** (deterministic on tie): When two cohort lay candidates are equidistant from Pinnacle's implied probability, the one with the alphabetically earlier book title wins. Prevents UI flicker between scrapes.
+- **FR-006** (non-binary markets must not surface as binary hedges): Soccer h2h is 3-way (home / draw / away). A back+lay on home/away leaves the bettor uncovered on a draw, so the locked-cash math from `bonusBet.js` is wrong by construction. The scraper MUST emit a third "Draw" outcome for every soccer h2h market, even when a specific book omits the draw price (price `null` is acceptable). The recommender's existing `outcomes.length !== 2` guard then excludes these markets automatically. This requirement is sport-family-scoped to Soccer; the same shape applies to any future 3+ way market type (Tennis is 2-way so no change; UFC is 2-way; MMA prop bets out of scope).
+
+### User Story 3 — Soccer never surfaces as a false 2-way hedge (Priority: P1)
+
+When the maintainer or a cohort friend runs Best Play on a slate that includes soccer matches, no soccer event is offered as a binary hedge. The card either shows a non-soccer event or "no play available."
+
+**Why this priority**: a draw outcome wipes out both the bonus bet (loses) and the cash hedge (loses) — the user is *worse* off than if they hadn't taken the play. Surfacing soccer as binary is actively harmful, not just inaccurate.
+
+**Acceptance**:
+1. Given a feed snapshot where the only available events are soccer, `recommendBonusBet` returns `EMPTY_STATE_NO_PLAY`.
+2. Given a mixed feed with soccer + a healthy 2-way event, the Best Play picks the 2-way event regardless of which has the higher would-be locked value.
 
 ### Key Entities
 

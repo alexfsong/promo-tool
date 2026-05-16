@@ -55,20 +55,26 @@ async function fetchDay(slug, dateStr) {
 }
 
 // Convert one game.odds[] entry (one book) into outcome arrays for h2h/spreads/totals.
-function bookmakerForBook(odds, homeName, awayName) {
+// `sportGroup` (e.g. 'Soccer') gates 3-way h2h emission: soccer moneylines
+// are home/draw/away, not binary, and silently dropping the draw caused
+// false-hedge recommendations (spec 006 FR-006). Always emit the draw
+// outcome for soccer so downstream consumers see outcomes.length === 3
+// even when a specific book omits the draw price.
+function bookmakerForBook(odds, homeName, awayName, sportGroup) {
   const title = BOOK_NAMES[odds.book_id];
   if (!title) return null;
 
   const markets = [];
 
   if (Number.isFinite(odds.ml_home) && Number.isFinite(odds.ml_away)) {
-    markets.push({
-      key: 'h2h',
-      outcomes: [
-        { name: homeName, price: odds.ml_home },
-        { name: awayName, price: odds.ml_away },
-      ],
-    });
+    const outcomes = [
+      { name: homeName, price: odds.ml_home },
+      { name: awayName, price: odds.ml_away },
+    ];
+    if (sportGroup === 'Soccer') {
+      outcomes.push({ name: 'Draw', price: Number.isFinite(odds.draw) ? odds.draw : null });
+    }
+    markets.push({ key: 'h2h', outcomes });
   }
 
   if (Number.isFinite(odds.spread_home_line) && Number.isFinite(odds.spread_away_line)
@@ -224,7 +230,7 @@ export async function scrapeActionNetwork(sport, { days = 7 } = {}) {
       }
 
       for (const o of latestPerBook.values()) {
-        const bookmaker = bookmakerForBook(o, homeName, awayName);
+        const bookmaker = bookmakerForBook(o, homeName, awayName, sport.group);
         if (!bookmaker) continue;
         out.push({
           eventKey: eventKey(homeName, awayName, startTime),
