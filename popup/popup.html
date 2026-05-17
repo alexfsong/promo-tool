@@ -73,6 +73,18 @@
       <span class="hint" id="bp-promo-blurb"></span>
     </div>
 
+    <div class="field">
+      <label for="bp-window">Time window for plays</label>
+      <select id="bp-window">
+        <option value="today">Today only</option>
+        <option value="24">Next 24 hours</option>
+        <option value="72" selected>Next 3 days</option>
+        <option value="168">Next 7 days</option>
+        <option value="all">All upcoming</option>
+      </select>
+      <span class="hint">Narrower windows hide futures and out-of-week events. Some promos need same-day plays.</span>
+    </div>
+
     <div id="bp-fields" class="bp-fields"></div>
 
     <details class="paste-slip">

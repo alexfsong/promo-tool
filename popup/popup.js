@@ -20,9 +20,22 @@ import {
   recommendDepositMatch,
   recommendOddsBoost,
   recommendBetAndGet,
+  filterByCommenceWindow,
   EMPTY_STATE_NO_PLAY,
   EMPTY_STATE_NEED_BOOKS,
 } from '../src/promos/recommend.js';
+
+// Spec 006 FR-007: map dropdown value → cutoff in ms.
+function windowCutoffMs(value) {
+  if (value === 'all') return Infinity;
+  if (value === 'today') {
+    const end = new Date();
+    end.setHours(23, 59, 59, 999);
+    return end.getTime() - Date.now();
+  }
+  const hours = Number(value);
+  return Number.isFinite(hours) && hours > 0 ? hours * 3600 * 1000 : 72 * 3600 * 1000;
+}
 import { parseBetSlip, PARSE_PARLAY } from '../src/parsers/betSlip.js';
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
@@ -407,6 +420,11 @@ bpPromoSelect.addEventListener('change', () => {
   bpCard.classList.add('hidden');
 });
 
+chrome.storage.local.get('bpWindow', ({ bpWindow }) => {
+  const sel = document.getElementById('bp-window');
+  if (bpWindow && [...sel.options].some(o => o.value === bpWindow)) sel.value = bpWindow;
+});
+
 // Fetch provider events on demand. Cache for the session.
 async function fetchAllEvents() {
   const apiKey = await getApiKey();
@@ -595,8 +613,12 @@ document.getElementById('bp-go').addEventListener('click', async () => {
   const events = lastProviderEvents ?? await fetchAllEvents();
   if (!events) return;
 
+  const windowSel = document.getElementById('bp-window');
+  const filteredEvents = filterByCommenceWindow(events, windowCutoffMs(windowSel.value));
+  chrome.storage.local.set({ bpWindow: windowSel.value });
+
   const userBooks = [...myBooksSet];
-  const play = recommend(promoTypeId, inputs, events, userBooks);
+  const play = recommend(promoTypeId, inputs, filteredEvents, userBooks);
 
   if (!play) {
     bpStatus.textContent = 'Please fill in all required fields with valid values.';

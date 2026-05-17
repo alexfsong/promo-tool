@@ -36,6 +36,22 @@ import { beginnerPlan, advancedPlan } from './betAndGet.js';
 export const EMPTY_STATE_NO_PLAY = { kind: 'no-play' };
 export const EMPTY_STATE_NEED_BOOKS = { kind: 'need-more-books' };
 
+// Spec 006 FR-007: drop events whose commence_time is outside [now, now+windowMs).
+// Most cohort promos are game-day / next-few-days; a Sept NFL future pollutes
+// May results. Callers pass the cutoff in ms; pass Infinity for "all upcoming".
+export function filterByCommenceWindow(events, windowMs, nowMs = Date.now()) {
+  if (!Array.isArray(events)) return [];
+  if (!Number.isFinite(windowMs) || windowMs <= 0) {
+    // Infinity or invalid: only filter out already-started events.
+    return events.filter(ev => Date.parse(ev.commence_time) >= nowMs);
+  }
+  const cutoff = nowMs + windowMs;
+  return events.filter(ev => {
+    const t = Date.parse(ev.commence_time);
+    return Number.isFinite(t) && t >= nowMs && t < cutoff;
+  });
+}
+
 function round2(n) {
   return Math.round(n * 100) / 100;
 }

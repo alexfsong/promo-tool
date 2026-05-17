@@ -10,6 +10,7 @@ import {
   recommendDepositMatch,
   recommendOddsBoost,
   recommendBetAndGet,
+  filterByCommenceWindow,
   EMPTY_STATE_NO_PLAY,
   EMPTY_STATE_NEED_BOOKS,
 } from '../src/promos/recommend.js';
@@ -526,6 +527,28 @@ test('spec 006 FR-006: missing draw price (price: null) still flags as 3-way', (
     ['DraftKings', 'FanDuel'],
   );
   assert.equal(out, EMPTY_STATE_NO_PLAY);
+});
+
+test('spec 006 FR-007: filterByCommenceWindow keeps only events inside [now, now+window)', () => {
+  const now = Date.parse('2026-05-16T12:00:00Z');
+  const events = [
+    { id: 'past', commence_time: '2026-05-16T10:00:00Z' },        // 2h ago — drop
+    { id: 'soon', commence_time: '2026-05-16T18:00:00Z' },        // 6h out — keep for 24h+
+    { id: 'tomorrow', commence_time: '2026-05-17T15:00:00Z' },    // 27h out
+    { id: 'next-week', commence_time: '2026-05-21T12:00:00Z' },   // 5d out
+    { id: 'september', commence_time: '2026-09-15T20:00:00Z' },   // 4mo out
+  ];
+  const k24 = filterByCommenceWindow(events, 24 * 3600 * 1000, now).map(e => e.id);
+  assert.deepEqual(k24, ['soon']);
+
+  const k72 = filterByCommenceWindow(events, 72 * 3600 * 1000, now).map(e => e.id);
+  assert.deepEqual(k72, ['soon', 'tomorrow']);
+
+  const all = filterByCommenceWindow(events, Infinity, now).map(e => e.id);
+  assert.deepEqual(all, ['soon', 'tomorrow', 'next-week', 'september'], 'Infinity keeps everything future');
+
+  const past = filterByCommenceWindow(events, 24 * 3600 * 1000, now);
+  assert.ok(!past.some(e => e.id === 'past'), 'past events always excluded');
 });
 
 test('spec 006 FR-004: Pinnacle never returned as evBook or hedgeBook', () => {

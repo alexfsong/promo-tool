@@ -38,20 +38,11 @@ export const SPORTS = [
   // Spec 005 FR-009 — extended coverage for the friend cohort. League IDs are
   // verified per research.md R5 at deploy time; rotate if Pinnacle reorganizes.
   // Action Network slugs are best-effort: if missing, Pinnacle covers alone.
-  {
-    key: 'soccer_epl',
-    title: 'English Premier League',
-    group: 'Soccer',
-    pinnacle: { sportId: 29, leagueIds: [1980] },
-    actionNetwork: { path: 'epl' },
-  },
-  {
-    key: 'soccer_uefa_champs_league',
-    title: 'UEFA Champions League',
-    group: 'Soccer',
-    pinnacle: { sportId: 29, leagueIds: [2627] },
-    actionNetwork: { path: 'soccer/uefa-champions-league' },
-  },
+  //
+  // Soccer (EPL + UEFA CL) was removed in spec 006: soccer h2h is 3-way
+  // (home/draw/away), so a binary back+lay hedge leaves the user uncovered
+  // on a draw. Cohort doesn't use soccer; revisit if demand returns and the
+  // recommender learns a real 3-way hedge.
   {
     key: 'tennis_atp_wta',
     title: 'ATP + WTA',
